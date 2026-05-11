@@ -1,5 +1,5 @@
 <img width="3245" height="2306" alt="aurora_player" src="https://github.com/user-attachments/assets/3d0ffd69-6075-4862-9d0d-a562721cee84" />
-# 🎵 Aurora Player
+## 🎵 Aurora Player
 
 Музыкальный плеер для Windows с поддержкой широкого спектра аудиоформатов, эквалайзером, микшером каналов и настраиваемой цветовой темой.
 
