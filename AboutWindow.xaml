@@ -1,0 +1,233 @@
+<Window x:Class="AuroraPlayer.AboutWindow"
+        xmlns="http://schemas.microsoft.com/winfx/2006/xaml/presentation"
+        xmlns:x="http://schemas.microsoft.com/winfx/2006/xaml"
+        Title="О программе"
+        Width="340" Height="430"
+        WindowStyle="None"
+        AllowsTransparency="True"
+        Background="Transparent"
+        ResizeMode="NoResize"
+        WindowStartupLocation="CenterOwner"
+        ShowInTaskbar="False">
+
+    <Window.Resources>
+        <Storyboard x:Key="NeonPulseViolet" RepeatBehavior="Forever">
+            <DoubleAnimation Storyboard.TargetProperty="(UIElement.Effect).(DropShadowEffect.BlurRadius)"
+                             From="6" To="28" Duration="0:0:1.4" AutoReverse="True"/>
+            <DoubleAnimation Storyboard.TargetProperty="(UIElement.Effect).(DropShadowEffect.Opacity)"
+                             From="0.45" To="1.0" Duration="0:0:1.4" AutoReverse="True"/>
+        </Storyboard>
+        <Storyboard x:Key="NeonPulsePink" RepeatBehavior="Forever">
+            <DoubleAnimation Storyboard.TargetProperty="(UIElement.Effect).(DropShadowEffect.BlurRadius)"
+                             From="4" To="24" Duration="0:0:1.8" AutoReverse="True"/>
+            <DoubleAnimation Storyboard.TargetProperty="(UIElement.Effect).(DropShadowEffect.Opacity)"
+                             From="0.4" To="1.0" Duration="0:0:1.8" AutoReverse="True"/>
+        </Storyboard>
+        <Storyboard x:Key="NeonPulseCyan" RepeatBehavior="Forever">
+            <DoubleAnimation Storyboard.TargetProperty="(UIElement.Effect).(DropShadowEffect.BlurRadius)"
+                             From="4" To="20" Duration="0:0:2.2" AutoReverse="True"/>
+            <DoubleAnimation Storyboard.TargetProperty="(UIElement.Effect).(DropShadowEffect.Opacity)"
+                             From="0.3" To="0.9" Duration="0:0:2.2" AutoReverse="True"/>
+        </Storyboard>
+        <Storyboard x:Key="NeonIcon" RepeatBehavior="Forever">
+            <DoubleAnimation Storyboard.TargetProperty="(UIElement.Effect).(DropShadowEffect.BlurRadius)"
+                             From="20" To="55" Duration="0:0:1.6" AutoReverse="True"/>
+            <DoubleAnimation Storyboard.TargetProperty="(UIElement.Effect).(DropShadowEffect.Opacity)"
+                             From="0.5" To="1.0" Duration="0:0:1.6" AutoReverse="True"/>
+        </Storyboard>
+    </Window.Resources>
+
+    <Grid>
+    <Border CornerRadius="20" Margin="14">
+        <Border.Background>
+            <LinearGradientBrush StartPoint="0,0" EndPoint="1,1">
+                <GradientStop Color="#07070F" Offset="0"/>
+                <GradientStop Color="#0D0D1F" Offset="0.5"/>
+                <GradientStop Color="#0A0F1A" Offset="1"/>
+            </LinearGradientBrush>
+        </Border.Background>
+        <Border.Effect>
+            <DropShadowEffect BlurRadius="30" ShadowDepth="0" Color="#000000" Opacity="0.85"/>
+        </Border.Effect>
+        <Border CornerRadius="20" ClipToBounds="True">
+            <Grid>
+                <Ellipse Width="280" Height="280" HorizontalAlignment="Left" VerticalAlignment="Top"
+                         Margin="-90,-90,0,0" Opacity="0.18" x:Name="GlowEllipse1">
+                    <Ellipse.Fill>
+                        <RadialGradientBrush x:Name="GlowBrush1">
+                            <GradientStop Color="#7C6BFF" Offset="0"/>
+                            <GradientStop Color="Transparent" Offset="1"/>
+                        </RadialGradientBrush>
+                    </Ellipse.Fill>
+                </Ellipse>
+                <Ellipse Width="200" Height="200" HorizontalAlignment="Right" VerticalAlignment="Bottom"
+                         Margin="0,0,-50,-50" Opacity="0.15" x:Name="GlowEllipse2">
+                    <Ellipse.Fill>
+                        <RadialGradientBrush x:Name="GlowBrush2">
+                            <GradientStop Color="#FF6BB5" Offset="0"/>
+                            <GradientStop Color="Transparent" Offset="1"/>
+                        </RadialGradientBrush>
+                    </Ellipse.Fill>
+                </Ellipse>
+                <Border CornerRadius="20" BorderThickness="1">
+                    <Border.BorderBrush>
+                        <LinearGradientBrush StartPoint="0,0" EndPoint="1,1">
+                            <GradientStop x:Name="BorderGrad1" Color="#2A7C6BFF" Offset="0"/>
+                            <GradientStop x:Name="BorderGrad2" Color="#10FF6BB5" Offset="1"/>
+                        </LinearGradientBrush>
+                    </Border.BorderBrush>
+                </Border>
+                <Border Background="Transparent" Height="48" VerticalAlignment="Top"
+                        MouseLeftButtonDown="TitleBar_MouseDown"/>
+                <Button HorizontalAlignment="Right" VerticalAlignment="Top"
+                        Margin="0,10,10,0" Width="28" Height="28"
+                        Click="CloseBtn_Click" Cursor="Hand" Panel.ZIndex="10">
+                    <Button.Template>
+                        <ControlTemplate TargetType="Button">
+                            <Border x:Name="bd" CornerRadius="14" Background="Transparent">
+                                <Path Data="M8,8 L20,20 M20,8 L8,20" Stroke="#90FF6BB5"
+                                      StrokeThickness="1.5" StrokeStartLineCap="Round" StrokeEndLineCap="Round"
+                                      HorizontalAlignment="Center" VerticalAlignment="Center"/>
+                            </Border>
+                            <ControlTemplate.Triggers>
+                                <Trigger Property="IsMouseOver" Value="True">
+                                    <Setter TargetName="bd" Property="Background" Value="#22FFFFFF"/>
+                                </Trigger>
+                            </ControlTemplate.Triggers>
+                        </ControlTemplate>
+                    </Button.Template>
+                </Button>
+
+                <StackPanel VerticalAlignment="Center" HorizontalAlignment="Center"
+                            Margin="30,10,30,16">
+
+                    <!-- Иконка 110x110 с неоновым пульсом -->
+                    <Border Width="110" Height="110" CornerRadius="28"
+                            HorizontalAlignment="Center" Margin="0,10,0,20" x:Name="IconBorder">
+                        <Border.Background>
+                            <LinearGradientBrush StartPoint="0,0" EndPoint="1,1">
+                                <GradientStop x:Name="IconGrad1" Color="#5C4FCC" Offset="0"/>
+                                <GradientStop x:Name="IconGrad2" Color="#CC4F90" Offset="1"/>
+                            </LinearGradientBrush>
+                        </Border.Background>
+                        <Border.Effect>
+                            <DropShadowEffect x:Name="IconShadow" Color="#7C6BFF" BlurRadius="20" ShadowDepth="0" Opacity="0.55"/>
+                        </Border.Effect>
+                        <Border.Triggers>
+                            <EventTrigger RoutedEvent="Border.Loaded">
+                                <BeginStoryboard Storyboard="{StaticResource NeonIcon}"/>
+                            </EventTrigger>
+                        </Border.Triggers>
+                        <Image Source="app.ico" Width="72" Height="72"
+                               HorizontalAlignment="Center" VerticalAlignment="Center"
+                               RenderOptions.BitmapScalingMode="HighQuality"/>
+                    </Border>
+
+                    <!-- Aurora Player — неон фиолетовый -->
+                    <TextBlock Text="Aurora Player" FontFamily="Syne" FontSize="26" FontWeight="Bold"
+                               HorizontalAlignment="Center" Margin="0,0,0,10">
+                        <TextBlock.Foreground>
+                            <LinearGradientBrush StartPoint="0,0" EndPoint="1,0">
+                                <GradientStop Color="#C0B8FF" Offset="0"/>
+                                <GradientStop Color="#FF8CC8" Offset="1"/>
+                            </LinearGradientBrush>
+                        </TextBlock.Foreground>
+                        <TextBlock.Effect>
+                            <DropShadowEffect x:Name="TitleShadow" Color="#7C6BFF" BlurRadius="6" ShadowDepth="0" Opacity="0.5"/>
+                        </TextBlock.Effect>
+                        <TextBlock.Triggers>
+                            <EventTrigger RoutedEvent="TextBlock.Loaded">
+                                <BeginStoryboard Storyboard="{StaticResource NeonPulseViolet}"/>
+                            </EventTrigger>
+                        </TextBlock.Triggers>
+                    </TextBlock>
+
+                    <!-- Версия badge — неон -->
+                    <Border x:Name="VersionBorder" Background="#1A7C6BFF" CornerRadius="10" BorderBrush="#607C6BFF"
+                            BorderThickness="1" Padding="14,5" HorizontalAlignment="Center" Margin="0,0,0,22">
+                        <Border.Effect>
+                            <DropShadowEffect x:Name="VersionShadow" Color="#7C6BFF" BlurRadius="4" ShadowDepth="0" Opacity="0.4"/>
+                        </Border.Effect>
+                        <Border.Triggers>
+                            <EventTrigger RoutedEvent="Border.Loaded">
+                                <BeginStoryboard Storyboard="{StaticResource NeonPulseViolet}"/>
+                            </EventTrigger>
+                        </Border.Triggers>
+                        <TextBlock Text="Версия 1.2.0" Foreground="#B0A8FF"
+                                   FontFamily="Syne" FontSize="10" FontWeight="Bold"/>
+                    </Border>
+
+                    <Border Height="1" Margin="0,0,0,14">
+                        <Border.Background>
+                            <LinearGradientBrush StartPoint="0,0" EndPoint="1,0">
+                                <GradientStop Color="Transparent" Offset="0"/>
+                                <GradientStop Color="#40A89FFF" Offset="0.5"/>
+                                <GradientStop Color="Transparent" Offset="1"/>
+                            </LinearGradientBrush>
+                        </Border.Background>
+                    </Border>
+
+                    <TextBlock Text="Разработчик" Foreground="#40FFFFFF" FontFamily="DM Sans"
+                               FontSize="10" HorizontalAlignment="Center" Margin="0,0,0,5"/>
+
+                    <!-- Имя — неон розовый -->
+                    <TextBlock Text="Виталий Николаевич" Foreground="White" FontFamily="Syne"
+                               FontSize="16" FontWeight="Bold" HorizontalAlignment="Center" Margin="0,0,0,4">
+                        <TextBlock.Effect>
+                            <DropShadowEffect x:Name="DevShadow" Color="#FF6BB5" BlurRadius="4" ShadowDepth="0" Opacity="0.4"/>
+                        </TextBlock.Effect>
+                        <TextBlock.Triggers>
+                            <EventTrigger RoutedEvent="TextBlock.Loaded">
+                                <BeginStoryboard Storyboard="{StaticResource NeonPulsePink}"/>
+                            </EventTrigger>
+                        </TextBlock.Triggers>
+                    </TextBlock>
+
+                    <!-- Ник — неон голубой -->
+                    <TextBlock Text="vitalikkontr" Foreground="#90A89FFF" FontFamily="DM Sans"
+                               FontSize="12" HorizontalAlignment="Center" Margin="0,0,0,20">
+                        <TextBlock.Effect>
+                            <DropShadowEffect x:Name="GithubShadow" Color="#00E5CC" BlurRadius="4" ShadowDepth="0" Opacity="0.35"/>
+                        </TextBlock.Effect>
+                        <TextBlock.Triggers>
+                            <EventTrigger RoutedEvent="TextBlock.Loaded">
+                                <BeginStoryboard Storyboard="{StaticResource NeonPulseCyan}"/>
+                            </EventTrigger>
+                        </TextBlock.Triggers>
+                    </TextBlock>
+
+                    <Border Height="1" Margin="0,0,0,14">
+                        <Border.Background>
+                            <LinearGradientBrush StartPoint="0,0" EndPoint="1,0">
+                                <GradientStop Color="Transparent" Offset="0"/>
+                                <GradientStop Color="#40A89FFF" Offset="0.5"/>
+                                <GradientStop Color="Transparent" Offset="1"/>
+                            </LinearGradientBrush>
+                        </Border.Background>
+                    </Border>
+
+                    <TextBlock Text="Поддерживаемые форматы" Foreground="#40FFFFFF" FontFamily="DM Sans"
+                               FontSize="10" HorizontalAlignment="Center" Margin="0,0,0,8"/>
+
+                    <!-- Форматы — тихий неон фиолетовый -->
+                    <TextBlock Text="MP3 · FLAC · WAV · OGG · OPUS · M4A · AAC · WMA · APE · MP4 · WV"
+                               Foreground="#60A89FFF" FontFamily="DM Sans" FontSize="10"
+                               HorizontalAlignment="Center" TextWrapping="Wrap" TextAlignment="Center"
+                               Margin="0,0,0,10">
+                        <TextBlock.Effect>
+                            <DropShadowEffect x:Name="FormatsShadow" Color="#7C6BFF" BlurRadius="4" ShadowDepth="0" Opacity="0.35"/>
+                        </TextBlock.Effect>
+                        <TextBlock.Triggers>
+                            <EventTrigger RoutedEvent="TextBlock.Loaded">
+                                <BeginStoryboard Storyboard="{StaticResource NeonPulseViolet}"/>
+                            </EventTrigger>
+                        </TextBlock.Triggers>
+                    </TextBlock>
+
+                </StackPanel>
+            </Grid>
+        </Border>
+    </Border>
+    </Grid>
+
+</Window>
