@@ -10,33 +10,6 @@
         WindowStartupLocation="CenterOwner"
         ShowInTaskbar="False">
 
-    <Window.Resources>
-        <Storyboard x:Key="NeonPulseViolet" RepeatBehavior="Forever">
-            <DoubleAnimation Storyboard.TargetProperty="(UIElement.Effect).(DropShadowEffect.BlurRadius)"
-                             From="6" To="28" Duration="0:0:1.4" AutoReverse="True"/>
-            <DoubleAnimation Storyboard.TargetProperty="(UIElement.Effect).(DropShadowEffect.Opacity)"
-                             From="0.45" To="1.0" Duration="0:0:1.4" AutoReverse="True"/>
-        </Storyboard>
-        <Storyboard x:Key="NeonPulsePink" RepeatBehavior="Forever">
-            <DoubleAnimation Storyboard.TargetProperty="(UIElement.Effect).(DropShadowEffect.BlurRadius)"
-                             From="4" To="24" Duration="0:0:1.8" AutoReverse="True"/>
-            <DoubleAnimation Storyboard.TargetProperty="(UIElement.Effect).(DropShadowEffect.Opacity)"
-                             From="0.4" To="1.0" Duration="0:0:1.8" AutoReverse="True"/>
-        </Storyboard>
-        <Storyboard x:Key="NeonPulseCyan" RepeatBehavior="Forever">
-            <DoubleAnimation Storyboard.TargetProperty="(UIElement.Effect).(DropShadowEffect.BlurRadius)"
-                             From="4" To="20" Duration="0:0:2.2" AutoReverse="True"/>
-            <DoubleAnimation Storyboard.TargetProperty="(UIElement.Effect).(DropShadowEffect.Opacity)"
-                             From="0.3" To="0.9" Duration="0:0:2.2" AutoReverse="True"/>
-        </Storyboard>
-        <Storyboard x:Key="NeonIcon" RepeatBehavior="Forever">
-            <DoubleAnimation Storyboard.TargetProperty="(UIElement.Effect).(DropShadowEffect.BlurRadius)"
-                             From="20" To="55" Duration="0:0:1.6" AutoReverse="True"/>
-            <DoubleAnimation Storyboard.TargetProperty="(UIElement.Effect).(DropShadowEffect.Opacity)"
-                             From="0.5" To="1.0" Duration="0:0:1.6" AutoReverse="True"/>
-        </Storyboard>
-    </Window.Resources>
-
     <Grid>
     <Border CornerRadius="20" Margin="14">
         <Border.Background>
@@ -101,7 +74,7 @@
                 <StackPanel VerticalAlignment="Center" HorizontalAlignment="Center"
                             Margin="30,10,30,16">
 
-                    <!-- Иконка 110x110 с неоновым пульсом -->
+                    <!-- App icon -->
                     <Border Width="110" Height="110" CornerRadius="28"
                             HorizontalAlignment="Center" Margin="0,10,0,20" x:Name="IconBorder">
                         <Border.Background>
@@ -113,17 +86,12 @@
                         <Border.Effect>
                             <DropShadowEffect x:Name="IconShadow" Color="#7C6BFF" BlurRadius="20" ShadowDepth="0" Opacity="0.55"/>
                         </Border.Effect>
-                        <Border.Triggers>
-                            <EventTrigger RoutedEvent="Border.Loaded">
-                                <BeginStoryboard Storyboard="{StaticResource NeonIcon}"/>
-                            </EventTrigger>
-                        </Border.Triggers>
                         <Image Source="app.ico" Width="72" Height="72"
                                HorizontalAlignment="Center" VerticalAlignment="Center"
                                RenderOptions.BitmapScalingMode="HighQuality"/>
                     </Border>
 
-                    <!-- Aurora Player — неон фиолетовый -->
+                    <!-- Aurora Player title -->
                     <TextBlock Text="Aurora Player" FontFamily="Syne" FontSize="26" FontWeight="Bold"
                                HorizontalAlignment="Center" Margin="0,0,0,10">
                         <TextBlock.Foreground>
@@ -135,25 +103,15 @@
                         <TextBlock.Effect>
                             <DropShadowEffect x:Name="TitleShadow" Color="#7C6BFF" BlurRadius="6" ShadowDepth="0" Opacity="0.5"/>
                         </TextBlock.Effect>
-                        <TextBlock.Triggers>
-                            <EventTrigger RoutedEvent="TextBlock.Loaded">
-                                <BeginStoryboard Storyboard="{StaticResource NeonPulseViolet}"/>
-                            </EventTrigger>
-                        </TextBlock.Triggers>
                     </TextBlock>
 
-                    <!-- Версия badge — неон -->
+                    <!-- Version badge -->
                     <Border x:Name="VersionBorder" Background="#1A7C6BFF" CornerRadius="10" BorderBrush="#607C6BFF"
                             BorderThickness="1" Padding="14,5" HorizontalAlignment="Center" Margin="0,0,0,22">
                         <Border.Effect>
                             <DropShadowEffect x:Name="VersionShadow" Color="#7C6BFF" BlurRadius="4" ShadowDepth="0" Opacity="0.4"/>
                         </Border.Effect>
-                        <Border.Triggers>
-                            <EventTrigger RoutedEvent="Border.Loaded">
-                                <BeginStoryboard Storyboard="{StaticResource NeonPulseViolet}"/>
-                            </EventTrigger>
-                        </Border.Triggers>
-                        <TextBlock Text="Версия 1.2.0" Foreground="#B0A8FF"
+                        <TextBlock Text="Версия 1.3.0.0" Foreground="#B0A8FF"
                                    FontFamily="Syne" FontSize="10" FontWeight="Bold"/>
                     </Border>
 
@@ -170,30 +128,20 @@
                     <TextBlock Text="Разработчик" Foreground="#40FFFFFF" FontFamily="DM Sans"
                                FontSize="10" HorizontalAlignment="Center" Margin="0,0,0,5"/>
 
-                    <!-- Имя — неон розовый -->
+                    <!-- Developer name -->
                     <TextBlock Text="Виталий Николаевич" Foreground="White" FontFamily="Syne"
                                FontSize="16" FontWeight="Bold" HorizontalAlignment="Center" Margin="0,0,0,4">
                         <TextBlock.Effect>
                             <DropShadowEffect x:Name="DevShadow" Color="#FF6BB5" BlurRadius="4" ShadowDepth="0" Opacity="0.4"/>
                         </TextBlock.Effect>
-                        <TextBlock.Triggers>
-                            <EventTrigger RoutedEvent="TextBlock.Loaded">
-                                <BeginStoryboard Storyboard="{StaticResource NeonPulsePink}"/>
-                            </EventTrigger>
-                        </TextBlock.Triggers>
                     </TextBlock>
 
-                    <!-- Ник — неон голубой -->
+                    <!-- Nickname -->
                     <TextBlock Text="vitalikkontr" Foreground="#90A89FFF" FontFamily="DM Sans"
                                FontSize="12" HorizontalAlignment="Center" Margin="0,0,0,20">
                         <TextBlock.Effect>
                             <DropShadowEffect x:Name="GithubShadow" Color="#00E5CC" BlurRadius="4" ShadowDepth="0" Opacity="0.35"/>
                         </TextBlock.Effect>
-                        <TextBlock.Triggers>
-                            <EventTrigger RoutedEvent="TextBlock.Loaded">
-                                <BeginStoryboard Storyboard="{StaticResource NeonPulseCyan}"/>
-                            </EventTrigger>
-                        </TextBlock.Triggers>
                     </TextBlock>
 
                     <Border Height="1" Margin="0,0,0,14">
@@ -209,7 +157,7 @@
                     <TextBlock Text="Поддерживаемые форматы" Foreground="#40FFFFFF" FontFamily="DM Sans"
                                FontSize="10" HorizontalAlignment="Center" Margin="0,0,0,8"/>
 
-                    <!-- Форматы — тихий неон фиолетовый -->
+                    <!-- Supported formats -->
                     <TextBlock Text="MP3 · FLAC · WAV · OGG · OPUS · M4A · AAC · WMA · APE · MP4 · WV"
                                Foreground="#60A89FFF" FontFamily="DM Sans" FontSize="10"
                                HorizontalAlignment="Center" TextWrapping="Wrap" TextAlignment="Center"
@@ -217,11 +165,6 @@
                         <TextBlock.Effect>
                             <DropShadowEffect x:Name="FormatsShadow" Color="#7C6BFF" BlurRadius="4" ShadowDepth="0" Opacity="0.35"/>
                         </TextBlock.Effect>
-                        <TextBlock.Triggers>
-                            <EventTrigger RoutedEvent="TextBlock.Loaded">
-                                <BeginStoryboard Storyboard="{StaticResource NeonPulseViolet}"/>
-                            </EventTrigger>
-                        </TextBlock.Triggers>
                     </TextBlock>
 
                 </StackPanel>

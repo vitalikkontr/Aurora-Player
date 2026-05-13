@@ -1,5 +1,5 @@
 #define MyAppName      "Aurora Player"
-#define MyAppVersion   "1.2.0"
+#define MyAppVersion   "1.3.0.0"
 #define MyAppPublisher "Виталий Николаевич (vitalikkontr)"
 #define MyAppExeName   "AuroraPlayer.exe"
 #define MyAppURL       "https://github.com/vitalikkontr"

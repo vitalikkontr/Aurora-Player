@@ -29,16 +29,13 @@ namespace AuroraPlayer
             _compressor       = null;
             _fftAgg           = null;
             _volumeProvider   = null;
-            _pendingSeekOnNextPlay = null;
+            _pendingSeekOnNextPlay      = null;
+            _pendingPlayAfterFfmpegSeek = false;
             if (_audioReader != null && _audioReader != _cachedAudioReader)
                 _audioReader.Dispose();
             _audioReader = null;
             _mfReader?.Dispose(); _mfReader = null;
-            if (_ffmpegDecodeTempWavPath != null)
-            {
-                try { File.Delete(_ffmpegDecodeTempWavPath); } catch { }
-                _ffmpegDecodeTempWavPath = null;
-            }
+            // _ffmpegDecodeTempWavPath: temp WAV более не создаётся (заменён ApeRingBufferStream).
         }
 
         private void DisposeCachedReader()
@@ -269,24 +266,104 @@ namespace AuroraPlayer
 
             Task.Run(() =>
             {
-                FfmpegDecodeStream? ffStream    = null;
-                string?             wavFallback = null;
-                Exception?          openError   = null;
+                // Стратегия открытия APE/WV:
+                // ─ APE/WV + кириллический путь → сразу ApeRingBufferStream.
+                //   Причина: ffmpeg при инициализации APE-декодера делает seek назад
+                //   в начало файла (метаданные хранятся в конце). Через однонаправленный
+                //   именованный pipe seek невозможен → ffmpeg зависает → звук пропадает.
+                //   ApeRingBufferStream решает это через собственный pipe-feeder.
+                // ─ APE/WV + ASCII путь → сначала FfmpegDecodeStream (pipe), при ошибке → ring.
+                // ─ FLAC/WAV/прочее → только FfmpegDecodeStream (pipe работает стабильно).
+                // Temp WAV на диск C: не пишется ни в одном сценарии.
 
-                try { ffStream = CreateReadableFfmpegStream(ffmpeg, t.Path); }
-                catch (Exception exPipe)
+                FfmpegDecodeStream?    ffStream   = null;
+                ApeRingBufferStream?   ringStream  = null;
+                Exception?             openError   = null;
+
+                string trackExt  = IOPath.GetExtension(t.Path);
+                bool   isApe     = trackExt.Equals(".ape", StringComparison.OrdinalIgnoreCase);
+                bool   isWv      = trackExt.Equals(".wv",  StringComparison.OrdinalIgnoreCase);
+                bool   isApeOrWv = isApe || isWv;
+
+                // APE/WV с кириллическим путём — сразу ring buffer, без попытки pipe
+                bool tryRingDirect = isApeOrWv && FfmpegService.PathHasNonAscii(t.Path);
+
+                if (!tryRingDirect)
                 {
-                    string wavErr = "";
-                    try { wavFallback = TryDecodeEntireFileToWavUsingFfmpeg(ffmpeg, t.Path, out wavErr); } catch { }
-                    if (wavFallback == null)
-                        openError = new Exception(
-                            $"Не удалось открыть APE/WV (pipe и WAV-fallback).\n" +
-                            (!string.IsNullOrEmpty(wavErr) ? wavErr : exPipe.Message), exPipe);
+                    // ASCII путь или не-APE/WV формат — пробуем pipe первым
+                    try { ffStream = CreateReadableFfmpegStream(ffmpeg, t.Path); }
+                    catch (Exception exPipe)
+                    {
+                        FfmpegService.AppendDecodeLog(
+                            $"PIPE fail file='{t.Path}' err='{exPipe.Message}'");
+                        // Для APE/WV с ASCII-путём тоже fallback на ring
+                        if (!isApeOrWv)
+                            openError = new Exception(
+                                $"Не удалось открыть {trackExt.TrimStart('.').ToUpperInvariant()} (pipe).\n" +
+                                exPipe.Message, exPipe);
+                        // если isApeOrWv — упадём в ring блок ниже
+                    }
+                }
+
+                // Ring buffer: для APE/WV с кириллицей (прямой путь) или fallback после pipe fail
+                if ((tryRingDirect || (isApeOrWv && ffStream == null)) && openError == null)
+                {
+                    string ringReason = tryRingDirect ? "non-ascii-direct" : "pipe-fail-fallback";
+                    try
+                    {
+                        var hint = isApe ? FfmpegInputHint.Ape : FfmpegInputHint.Wavpack;
+                        int macOffset = 0;
+                        if (isApe)
+                            FfmpegService.TryFindApeMacHeaderOffset(t.Path, out macOffset);
+
+                        ringStream = new ApeRingBufferStream(
+                            ffmpegPath:       ffmpeg,
+                            inputPath:        t.Path,
+                            inputHint:        hint,
+                            skipInitialBytes: macOffset > 0 ? macOffset : 0);
+
+                        // Даём буферу наполниться — APE медленно стартует
+                        Thread.Sleep(600);
+
+                        var probe = new byte[Math.Max(ringStream.WaveFormat.BlockAlign * 16, 256)];
+                        int got   = 0;
+                        for (int tries = 30; tries > 0 && got == 0; tries--)
+                        {
+                            got = ringStream.Read(probe, 0, probe.Length);
+                            if (got == 0) Thread.Sleep(50);
+                        }
+
+                        if (got > 0)
+                        {
+                            FfmpegService.AppendDecodeLog(
+                                $"RING ok reason='{ringReason}' file='{t.Path}' hint='{hint}'");
+                        }
+                        else
+                        {
+                            string ringErr = ringStream.LastError;
+                            ringStream.Dispose();
+                            ringStream = null;
+                            openError  = new Exception(
+                                $"Не удалось открыть {trackExt.TrimStart('.').ToUpperInvariant()} (ring).\n" +
+                                (!string.IsNullOrEmpty(ringErr) ? ringErr : "ffmpeg не выдал данных"), null);
+                        }
+                    }
+                    catch (Exception exRing)
+                    {
+                        ringStream?.Dispose();
+                        ringStream = null;
+                        openError  = exRing;
+                    }
                 }
 
                 Dispatcher.BeginInvoke(new Action(() =>
                 {
-                    if (_playSession != capturedSession) { ffStream?.Dispose(); return; }
+                    if (_playSession != capturedSession)
+                    {
+                        ffStream?.Dispose();
+                        ringStream?.Dispose();
+                        return;
+                    }
                     if (openError != null)
                     {
                         FfmpegService.AppendDecodeLog($"OPEN fail file='{t.Path}' err='{openError.Message}'");
@@ -305,6 +382,7 @@ namespace AuroraPlayer
                         ISampleProvider baseProvider;
                         TimeSpan        totalTime;
 
+                        // ── FfmpegDecodeStream (pipe-режим, приоритет) ────────────────
                         if (ffStream != null)
                         {
                             _mfReader = ffStream;
@@ -317,30 +395,26 @@ namespace AuroraPlayer
                             }
                             else { _ffmpegCueSegment = null; baseProvider = new FfmpegFloatProvider(ffStream); }
                         }
+                        // ── ApeRingBufferStream (ring buffer в памяти, без temp WAV) ──
                         else
                         {
-                            _ffmpegDecodeTempWavPath = wavFallback;
-                            DisposeCachedReader();
-                            _audioReader = new AudioFileReader(wavFallback!);
-                            _mfReader    = null;
-                            totalTime    = _audioReader.TotalTime;
+                            _mfReader    = ringStream;
+                            _audioReader = null;
+                            totalTime    = TimeSpan.Zero;
+                            try { using var tag = TagFile.Create(t.Path); totalTime = tag.Properties.Duration; } catch { }
                             if (t.IsCue)
                             {
-                                _cueSegment = new CueSegmentProvider(_audioReader, _cueStart, _cueEnd);
-                                _cueSegment.SeekTo(_cueStart); _ffmpegCueSegment = null; baseProvider = _cueSegment;
+                                // CUE поверх ring: используем FfmpegCueSegment (он работает
+                                // с любым WaveStream, не только с FfmpegDecodeStream).
+                                var seg = new FfmpegCueSegment(ringStream!, _cueStart, _cueEnd);
+                                seg.StartSkipAsync(); _ffmpegCueSegment = seg; _cueSegment = null; baseProvider = seg;
                             }
                             else
                             {
-                                _cueSegment = null; _ffmpegCueSegment = null;
-                                _audioReader.CurrentTime = TimeSpan.Zero; baseProvider = _audioReader;
+                                _ffmpegCueSegment = null;
+                                _cueSegment       = null;
+                                baseProvider      = new FfmpegFloatProvider(ringStream!);
                             }
-                        }
-
-                        if (seekSeconds > 0 && _audioReader != null && t.IsCue)
-                        {
-                            // Для CUE seek делается в FinishLoadTrack через _cueSegment.SeekTo.
-                            // Для обычного файла FinishLoadTrack сам выставляет _audioReader.CurrentTime.
-                            // Здесь ничего делать не нужно.
                         }
 
                         FinishLoadTrack(index, t, baseProvider, totalTime, autoPlay, seekSeconds);
@@ -434,15 +508,26 @@ namespace AuroraPlayer
             // WdlResamplingSampleProvider (FLAC 44100→48000) делает prefill при создании:
             // читает первые сэмплы из источника. Если позиция не выставлена ДО SetSource,
             // prefill захватит данные с позиции 0.
-            // Для APE/WV (FfmpegDecodeStream) seek на этом этапе невозможен — отложим.
-            bool _isFfmpegStream = _mfReader is FfmpegDecodeStream;
+            //
+            // FfmpegDecodeStream: seek через RestartAtBytes работает, но FfmpegCueSegment
+            //   не пересоздаётся — откладываем до Play (SeekFfmpegAsync).
+            // ApeRingBufferStream: seek через Position/RestartAtBytes работает ДО SetSource
+            //   без побочных эффектов (нет FfmpegCueSegment, нет prefill-проблемы).
+            //   Применяем сразу — _pendingSeekOnNextPlay не нужен.
+            bool _isFfmpegPipeStream = _mfReader is FfmpegDecodeStream;
+            bool _isRingStream       = _mfReader is ApeRingBufferStream;
+            // Оба типа ffmpeg-потоков: seek нельзя откладывать для ring (уже декодирует),
+            // нельзя применять до SetSource для pipe (FfmpegCueSegment сбросится).
+            bool _isFfmpegStream     = _isFfmpegPipeStream || _isRingStream;
 
-            if (seekSeconds > 0 && !_isFfmpegStream)
+            if (seekSeconds > 0 && !_isFfmpegPipeStream)
             {
-                // FLAC / WAV / OGG / MP3: применяем seek ДО SetSource
+                // FLAC / WAV / OGG / MP3 / ApeRingBuffer: применяем seek ДО SetSource.
+                // Для ring stream это перезапускает ffmpeg с -ss — нужно сделать один раз здесь,
+                // чтобы не делать повторно при нажатии Play.
                 ApplyTrackSeek(t, seekSeconds);
                 FfmpegService.AppendDecodeLog(
-                    $"LOAD pre-seek file='{t.Path}' seek='{seekSeconds:F3}'");
+                    $"LOAD pre-seek file='{t.Path}' seek='{seekSeconds:F3}' ring='{_isRingStream}'");
             }
 
             _audioOutput.SetSource(_volumeProvider);
@@ -450,16 +535,23 @@ namespace AuroraPlayer
 
             if (seekSeconds > 0)
             {
-                if (_isFfmpegStream)
+                if (_isFfmpegPipeStream)
                 {
-                    // APE/WV: откладываем до нажатия Play
+                    // FfmpegDecodeStream (FLAC/прочее через pipe): откладываем до Play,
+                    // SeekFfmpegAsync пересоздаст FfmpegCueSegment с правильными счётчиками.
                     _pendingSeekOnNextPlay = seekSeconds;
+                }
+                else if (_isRingStream)
+                {
+                    // ApeRingBufferStream: seek уже применён выше через ApplyTrackSeek.
+                    // При autoPlay=false запоминаем позицию только для rebind буфера при Play,
+                    // но не для повторного seek (он уже выполнен).
+                    _pendingSeekOnNextPlay = autoPlay ? null : seekSeconds;
                 }
                 else
                 {
-                    // FLAC/WAV: seek уже применён до SetSource.
-                    // Повторяем после LoadAlbumArt — TagLib (чтение тегов) может
-                    // случайно сдвинуть позицию файла через общий файловый кеш ОС.
+                    // FLAC/WAV/прочее (AudioFileReader): seek уже применён до SetSource.
+                    // Повторяем после LoadAlbumArt — TagLib может сдвинуть позицию файла.
                     _pendingSeekOnNextPlay = autoPlay ? null : seekSeconds;
                 }
                 ProgressSlider.Value = seekSeconds;
@@ -579,26 +671,48 @@ namespace AuroraPlayer
                     _currentIndex >= 0 &&
                     _currentIndex < Playlist.Count)
                 {
-                    // Применяем отложенный seek ДО Play, чтобы NAudio не успел
-                    // буферизовать данные с неверной позиции.
-                    // Двойной вызов SeekTo после Play удалён: он создавал третий seek
-                    // (после pre-seek в FinishLoadTrack и этого) и мог сбить позицию
-                    // уже начавшегося воспроизведения.
                     var currentTrack = Playlist[_currentIndex];
-                    bool shouldRebindSource = _mfReader is not FfmpegDecodeStream && _volumeProvider != null;
 
-                    ApplyTrackSeek(currentTrack, pendingSeek);
+                    // Для FfmpegDecodeStream (FLAC/APE/WV через ffmpeg): нельзя использовать
+                    // ApplyTrackSeek → SetWaveStreamTime → RestartAtBytes, потому что при этом
+                    // FfmpegCueSegment не пересоздаётся и его внутренние счётчики (_position,
+                    // _skipDone) остаются в неверном состоянии — трек заканчивается раньше
+                    // времени и срабатывает AdvanceTrack (→ второй LoadTrack с seek=0).
+                    // Используем SeekFfmpegAsync — он пересоздаёт весь FfmpegCueSegment.
+                    if (_mfReader is FfmpegDecodeStream oldFfmpeg)
+                    {
+                        _pendingSeekOnNextPlay = null;
+                        FfmpegService.AppendDecodeLog(
+                            $"PLAY pending-seek ffmpeg-async file='{currentTrack.Path}' seek='{pendingSeek:F3}'");
+                        SeekFfmpegAsync(oldFfmpeg, pendingSeek);
+                        _pendingPlayAfterFfmpegSeek = true;
+                        return;
+                    }
 
-                    // For non-ffmpeg sources rebuild output binding after seek.
-                    // This drops any prefilled resampler/output buffers and guarantees
-                    // first audible samples come from the restored position.
-                    if (shouldRebindSource)
-                        _audioOutput.SetSource(_volumeProvider);
-
-                    _pendingSeekOnNextPlay = null;
-                    FfmpegService.AppendDecodeLog(
-                        $"PLAY pending-seek consumed file='{currentTrack.Path}' seek='{pendingSeek:F3}' " +
-                        $"readerPos='{ReaderCurrentTime.TotalSeconds:F3}' rebind='{shouldRebindSource}'");
+                    // Для ApeRingBufferStream: seek уже был применён в FinishLoadTrack
+                    // (pre-seek через ApplyTrackSeek → RestartAtBytes). Здесь нужен только
+                    // rebind выходного буфера чтобы сбросить prefill ресэмплера.
+                    if (_mfReader is ApeRingBufferStream)
+                    {
+                        bool shouldRebindRing = _volumeProvider != null;
+                        if (shouldRebindRing) _audioOutput.SetSource(_volumeProvider);
+                        _pendingSeekOnNextPlay = null;
+                        FfmpegService.AppendDecodeLog(
+                            $"PLAY pending-seek ring-rebind file='{currentTrack.Path}' seek='{pendingSeek:F3}' " +
+                            $"readerPos='{ReaderCurrentTime.TotalSeconds:F3}'");
+                        // Не возвращаемся — продолжаем до _audioOutput.Play() ниже
+                    }
+                    else
+                    {
+                        // AudioFileReader (FLAC/WAV/MP3): seek ДО Play + rebind буфера.
+                        bool shouldRebindSource = _volumeProvider != null;
+                        ApplyTrackSeek(currentTrack, pendingSeek);
+                        if (shouldRebindSource) _audioOutput.SetSource(_volumeProvider);
+                        _pendingSeekOnNextPlay = null;
+                        FfmpegService.AppendDecodeLog(
+                            $"PLAY pending-seek consumed file='{currentTrack.Path}' seek='{pendingSeek:F3}' " +
+                            $"readerPos='{ReaderCurrentTime.TotalSeconds:F3}' rebind='{shouldRebindSource}'");
+                    }
                 }
 
                 _audioOutput.Play();

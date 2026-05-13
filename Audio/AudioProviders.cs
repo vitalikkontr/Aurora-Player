@@ -279,7 +279,7 @@ namespace AuroraPlayer
         private readonly object          _fftLock = new();
         private int                      _fftPos;
         private int                      _readCount;
-        // Пересчитываем FFT на каждом буфере для более точного ритма визуализации.
+        // Для точного попадания в ритм держим FFT на каждом буфере.
         private const int FftSize        = 1024;
         private const int FftSkipBuffers = 0;
 

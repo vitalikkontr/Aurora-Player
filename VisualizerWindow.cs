@@ -42,11 +42,16 @@ namespace AuroraPlayer
 
     public class VisualizerWindow : Window
     {
+        private const double DefaultWindowWidth  = 760;
+        private const double DefaultWindowHeight = 430;
+
         // ── Win32 для истинного fullscreen поверх панели задач ────────────────────
         [DllImport("user32.dll")] private static extern bool SetWindowPos(IntPtr hWnd, IntPtr hWndInsertAfter, int X, int Y, int cx, int cy, uint uFlags);
         [DllImport("user32.dll")] private static extern IntPtr MonitorFromWindow(IntPtr hwnd, uint dwFlags);
         [DllImport("user32.dll")] private static extern bool GetMonitorInfo(IntPtr hMonitor, ref MONITORINFO lpmi);
+        [DllImport("user32.dll")] private static extern bool GetCursorPos(out WINPOINT lpPoint);
         [DllImport("kernel32.dll")] private static extern uint SetThreadExecutionState(uint esFlags);
+        [StructLayout(LayoutKind.Sequential)] private struct WINPOINT { public int X, Y; }
         [StructLayout(LayoutKind.Sequential)] private struct RECT { public int Left, Top, Right, Bottom; }
         [StructLayout(LayoutKind.Sequential)] private struct MONITORINFO { public int cbSize; public RECT rcMonitor; public RECT rcWork; public uint dwFlags; }
         private static readonly IntPtr HWND_TOP   = new IntPtr(0);
@@ -249,7 +254,8 @@ namespace AuroraPlayer
         private Border          _controlBar   = null!;
         private DispatcherTimer _hideBarTimer = null!;
         private bool            _barVisible   = true;
-        private Point           _lastMousePos = new(double.NaN, double.NaN);
+        private int             _lastCursorX  = int.MinValue;
+        private int             _lastCursorY  = int.MinValue;
 
         // ── Фон ───────────────────────────────────────────────────────────────────
         private Rectangle              _bgRect  = null!;
@@ -265,8 +271,8 @@ namespace AuroraPlayer
         {
             _provider          = provider;
             Title              = "Aurora Visualizer";
-            Width              = 760;
-            Height             = 430;
+            Width              = DefaultWindowWidth;
+            Height             = DefaultWindowHeight;
             MinWidth           = 400;
             MinHeight          = 260;
             Background         = Brushes.Black;
@@ -353,25 +359,29 @@ namespace AuroraPlayer
                 HideControlBar();
                 // Скрываем курсор только в полноэкранном режиме
                 if (_fullscreen)
+                {
                     Cursor = Cursors.None;
+                    Mouse.OverrideCursor = Cursors.None;
+                }
             };
             MouseMove += (_, e) =>
             {
-                // Визуальные элементы анимируются и могут генерировать MouseMove
-                // даже когда курсор физически не двигался. Игнорируем такие события,
-                // иначе таймер автоскрытия будет бесконечно перезапускаться.
-                var pos = e.GetPosition(this);
-                if (!double.IsNaN(_lastMousePos.X) &&
-                    Math.Abs(pos.X - _lastMousePos.X) < 0.5 &&
-                    Math.Abs(pos.Y - _lastMousePos.Y) < 0.5)
+                // Визуальные элементы могут вызывать ложные MouseMove даже при
+                // неподвижной мыши. Проверяем реальное экранное положение курсора.
+                if (GetCursorPos(out WINPOINT pt))
                 {
-                    return;
+                    if (pt.X == _lastCursorX && pt.Y == _lastCursorY)
+                        return;
+                    _lastCursorX = pt.X;
+                    _lastCursorY = pt.Y;
                 }
-                _lastMousePos = pos;
 
                 // Восстанавливаем курсор только если он был скрыт (т.е. в fullscreen)
                 if (_fullscreen)
+                {
                     Cursor = null;
+                    Mouse.OverrideCursor = null;
+                }
                 ShowControlBar();
                 _hideBarTimer.Stop();
                 _hideBarTimer.Start();
@@ -382,6 +392,7 @@ namespace AuroraPlayer
                 CompositionTarget.Rendering -= OnRender;
                 SetThreadExecutionState(ES_CONTINUOUS);
                 Cursor = null;
+                Mouse.OverrideCursor = null;
             };
             IsVisibleChanged += (_, e) =>
             {
@@ -390,7 +401,9 @@ namespace AuroraPlayer
                     // Окно показано: сбрасываем таймер и возобновляем рендеринг
                     _lastRenderTime = DateTime.MinValue;
                     _lastRenderingTime = TimeSpan.Zero;
-                    _lastMousePos = new Point(double.NaN, double.NaN);
+                    _frameAccumulatorMs = 0.0;
+                    _lastCursorX = int.MinValue;
+                    _lastCursorY = int.MinValue;
                     CompositionTarget.Rendering += OnRender;
                 }
                 else
@@ -399,8 +412,10 @@ namespace AuroraPlayer
                     // FFT продолжает собираться в аудио-потоке (это дёшево),
                     // но OnRender не вызывается — нагрузка на UI-поток = 0.
                     CompositionTarget.Rendering -= OnRender;
+                    _frameAccumulatorMs = 0.0;
                     _hideBarTimer.Stop();
                     Cursor = null;
+                    Mouse.OverrideCursor = null;
                 }
             };
         }
@@ -876,20 +891,27 @@ namespace AuroraPlayer
                 _hideBarTimer.Stop();
                 HideControlBar();
                 Cursor = Cursors.None;
-                _lastMousePos = new Point(double.NaN, double.NaN);
+                Mouse.OverrideCursor = Cursors.None;
+                _lastCursorX = int.MinValue;
+                _lastCursorY = int.MinValue;
             }
             else
             {
                 WindowState = WindowState.Normal;
                 Topmost     = false;
                 ResizeMode  = ResizeMode.CanResize;
-                Left = _prevLeft; Top = _prevTop; Width = _prevWidth; Height = _prevHeight;
+                Left = _prevLeft;
+                Top  = _prevTop;
+                Width  = DefaultWindowWidth;
+                Height = DefaultWindowHeight;
                 _fullscreen = false;
                 SetThreadExecutionState(ES_CONTINUOUS);
                 Cursor = null;
+                Mouse.OverrideCursor = null;
                 ShowControlBar();
                 _hideBarTimer.Stop();
-                _lastMousePos = new Point(double.NaN, double.NaN);
+                _lastCursorX = int.MinValue;
+                _lastCursorY = int.MinValue;
             }
         }
 
@@ -905,37 +927,71 @@ namespace AuroraPlayer
 
         private DateTime _lastRenderTime = DateTime.MinValue;
         private TimeSpan _lastRenderingTime = TimeSpan.Zero;
-        // ── FPS-лимитер: рендерим до 60 кадров/сек (~16.7 мс между кадрами) ──
-        private const double TargetFrameMs = 1000.0 / 60.0; // 16.67 ms
+        private double _frameAccumulatorMs = 0.0;
+        private const double BaseFrameMs = 1000.0 / 60.0; // used for time-normalized smoothing
+        private const double PlayingFullscreenFrameMs = 1000.0 / 40.0;
+        private const double PlayingWindowedFrameMs   = 1000.0 / 30.0;
+        private const double HeavyModeWindowedFrameMs = 1000.0 / 22.0;
+        private const double SmallWindowFrameMs       = 1000.0 / 20.0;
+        private const double IdleFrameMs              = 1000.0 / 10.0;
+
+        private double GetTargetFrameMs()
+        {
+            if (!_provider.IsPlaying) return IdleFrameMs;
+
+            if (_fullscreen) return PlayingFullscreenFrameMs;
+
+            // В оконном режиме даём более "эко" лимит для снижения CPU/GPU.
+            double targetMs = PlayingWindowedFrameMs;
+            if (_mode is VisualizerMode.DancerSpectrum or VisualizerMode.MagmaFlow)
+                targetMs = Math.Max(targetMs, HeavyModeWindowedFrameMs);
+
+            // Маленькое окно: визуально 14 FPS достаточно, а нагрузка заметно ниже.
+            double area = ActualWidth * ActualHeight;
+            if (area > 1 && area < 520_000)
+                targetMs = Math.Max(targetMs, SmallWindowFrameMs);
+
+            return targetMs;
+        }
 
         // ─── Главный цикл рендеринга ──────────────────────────────────────────────
         private void OnRender(object? sender, EventArgs e)
         {
             if (!IsVisible) return;
+            double targetFrameMs = GetTargetFrameMs();
 
             // Реальная дельта времени — анимация не зависит от FPS.
             // Берём RenderingTime (композиционный таймлайн WPF) чтобы снизить джиттер.
             double elapsedMs;
             if (e is RenderingEventArgs re)
             {
-                elapsedMs = _lastRenderingTime == TimeSpan.Zero
-                    ? TargetFrameMs
-                    : (re.RenderingTime - _lastRenderingTime).TotalMilliseconds;
+                if (_lastRenderingTime == TimeSpan.Zero)
+                {
+                    elapsedMs = targetFrameMs;
+                }
+                else
+                {
+                    elapsedMs = (re.RenderingTime - _lastRenderingTime).TotalMilliseconds;
+                    // Дубликаты с тем же RenderingTime пропускаем.
+                    if (elapsedMs <= 0) return;
+                }
                 _lastRenderingTime = re.RenderingTime;
             }
             else
             {
                 var now = DateTime.UtcNow;
                 elapsedMs = _lastRenderTime == DateTime.MinValue
-                    ? TargetFrameMs
+                    ? targetFrameMs
                     : (now - _lastRenderTime).TotalMilliseconds;
                 _lastRenderTime = now;
             }
+            _frameAccumulatorMs = Math.Min(_frameAccumulatorMs + elapsedMs, targetFrameMs * 4.0);
+            if (_frameAccumulatorMs < targetFrameMs) return;
 
-            // Пропускаем кадр если прошло меньше целевого интервала
-            if (elapsedMs < TargetFrameMs) return;
+            double frameMs = _frameAccumulatorMs;
+            _frameAccumulatorMs %= targetFrameMs;
 
-            double dt = Math.Min(elapsedMs / 1000.0, 0.033); // cap 33ms (30 fps min)
+            double dt = Math.Min(frameMs / 1000.0, 0.05); // cap 50ms to avoid huge time jumps
             _time += dt;
 
             double W = _canvas.ActualWidth;
@@ -945,7 +1001,7 @@ namespace AuroraPlayer
             _trackLabel.Text  = _provider.CurrentTrackTitle;
             _artistLabel.Text = _provider.CurrentArtist.ToUpperInvariant();
 
-            UpdateFft();
+            UpdateFft(dt);
             UpdateBackground(W, H);
 
             switch (_mode)
@@ -962,19 +1018,23 @@ namespace AuroraPlayer
         }
 
         // ─── FFT ──────────────────────────────────────────────────────────────────
-        private void UpdateFft()
+        private void UpdateFft(double dt)
         {
             var  raw    = _provider.GetFftData();
             bool active = _provider.IsPlaying && raw != null;
             int  len    = Math.Min(_smoothFft.Length, raw?.Length ?? 0);
+            float frameScale = (float)Math.Clamp((dt * 1000.0) / BaseFrameMs, 0.25, 4.0);
+            float riseKeep = MathF.Pow(0.25f, frameScale);
+            float fallKeep = MathF.Pow(0.86f, frameScale);
+            float peakKeep = MathF.Pow(0.982f, frameScale);
 
             for (int i = 0; i < _smoothFft.Length; i++)
             {
                 float v = active && i < len ? raw![i] : 0f;
                 _smoothFft[i] = v > _smoothFft[i]
-                    ? _smoothFft[i] * 0.25f + v * 0.75f
-                    : _smoothFft[i] * 0.86f + v * 0.14f;
-                _peakFft[i] = Math.Max(_peakFft[i] * 0.982f, _smoothFft[i]);
+                    ? _smoothFft[i] * riseKeep + v * (1f - riseKeep)
+                    : _smoothFft[i] * fallKeep + v * (1f - fallKeep);
+                _peakFft[i] = Math.Max(_peakFft[i] * peakKeep, _smoothFft[i]);
             }
             _bassEnergy = BandEnergy(0,  6);
             _midEnergy  = BandEnergy(6,  60);

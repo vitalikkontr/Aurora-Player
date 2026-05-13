@@ -76,6 +76,14 @@ namespace AuroraPlayer
                 return;
             }
 
+            // ApeRingBufferStream: перезапускаем ffmpeg с нужным смещением,
+            // аналогично SeekFfmpegAsync, но через Position (RestartAtBytes внутри).
+            if (_mfReader is ApeRingBufferStream ringStream)
+            {
+                SeekRingBufferAsync(ringStream, relativeSeconds);
+                return;
+            }
+
             if (_cueSegment != null && _audioReader != null)
             {
                 var seekAbs = TimeSpan.FromSeconds(_cueStart.TotalSeconds + relativeSeconds);
@@ -97,6 +105,70 @@ namespace AuroraPlayer
 
             if (_mfReader != null)
                 _mfReader.CurrentTime = TimeSpan.FromSeconds(relativeSeconds);
+        }
+
+        // ─── Ring buffer seek (не блокирует UI) ──────────────────────────────────
+
+        private void SeekRingBufferAsync(ApeRingBufferStream oldRing, double relativeSeconds)
+        {
+            bool wasPlaying    = _isPlaying;
+            var absoluteSeek   = TimeSpan.FromSeconds(_cueStart.TotalSeconds + relativeSeconds);
+            var cueEndSnapshot = _cueEnd;
+            var surroundRef    = _surround;
+            var volumeRef      = _volumeProvider;
+
+            Interlocked.Increment(ref _playSession);
+            int capturedSeekSession = _playSession;
+
+            _audioOutput.Pause();
+
+            // Перезапускаем ring buffer с новой позицией (убивает старый ffmpeg процесс,
+            // запускает новый с -ss seekOffset — без записи на диск).
+            oldRing.Position = (long)(absoluteSeek.TotalSeconds * oldRing.WaveFormat.AverageBytesPerSecond);
+
+            // Даём буферу наполниться в фоне, чтобы не подвешивать UI.
+            Task.Run(() =>
+            {
+                Thread.Sleep(400); // ~400 мс достаточно для первого чанка APE
+
+                Dispatcher.BeginInvoke(new Action(() =>
+                {
+                    if (_playSession != capturedSeekSession) return;
+                    if (_mfReader != oldRing) return; // трек сменился
+
+                    ISampleProvider seekProvider;
+                    if (cueEndSnapshot > TimeSpan.Zero)
+                    {
+                        double remaining = cueEndSnapshot.TotalSeconds - absoluteSeek.TotalSeconds;
+                        var seg = new FfmpegCueSegment(oldRing,
+                            start: TimeSpan.Zero,
+                            end:   remaining > 0 ? TimeSpan.FromSeconds(remaining) : TimeSpan.Zero,
+                            seekOffsetSeconds: relativeSeconds);
+                        seg.MarkSkipDone();
+                        _ffmpegCueSegment = seg;
+                        seekProvider      = seg;
+                    }
+                    else
+                    {
+                        _ffmpegCueSegment = null;
+                        seekProvider      = new FfmpegFloatProvider(oldRing);
+                    }
+
+                    if (surroundRef != null && volumeRef != null
+                        && _surround == surroundRef && _volumeProvider == volumeRef)
+                    {
+                        surroundRef.ReplaceSource(seekProvider);
+                        _audioOutput.SetSource(volumeRef);
+                        bool shouldPlay = wasPlaying || _pendingPlayAfterFfmpegSeek;
+                        _pendingPlayAfterFfmpegSeek = false;
+                        if (shouldPlay) { _audioOutput.Play(); SetPlaying(true); }
+                    }
+                    else
+                    {
+                        _pendingPlayAfterFfmpegSeek = false;
+                    }
+                }));
+            });
         }
 
         // ─── Ffmpeg seek в Task.Run (не блокирует UI) ────────────────────────────
@@ -128,7 +200,6 @@ namespace AuroraPlayer
             {
                 var pathVariants = FfmpegService.BuildInputPathVariants(trackSnapshot.Path);
                 FfmpegDecodeStream? newStream = null;
-                string? tempCreated = null;
 
                 foreach (var (pathVar, deleteAfter) in pathVariants)
                 {
@@ -136,7 +207,6 @@ namespace AuroraPlayer
                     string ext2 = IOPath.GetExtension(trackSnapshot.Path);
                     if (ext2.Equals(".ape", StringComparison.OrdinalIgnoreCase)) hints.Add(FfmpegInputHint.Ape);
                     else if (ext2.Equals(".wv", StringComparison.OrdinalIgnoreCase)) hints.Add(FfmpegInputHint.Wavpack);
-                    if (deleteAfter) tempCreated = pathVar;
 
                     foreach (var hint in hints)
                     {
@@ -148,7 +218,7 @@ namespace AuroraPlayer
 
                             // Зондируем первые байты
                             var probe = new byte[Math.Max(candidate.WaveFormat.BlockAlign * 16, 128)];
-                            int got = 0, tries = 120;
+                            int got = 0, tries = FfmpegService.ProbeRetryCount * 2;  // 60*2=120, но через константу
                             while (got == 0 && tries-- > 0)
                             {
                                 try { got = candidate.Read(probe, 0, probe.Length); } catch { break; }
@@ -157,8 +227,7 @@ namespace AuroraPlayer
                             if (got > 0)
                             {
                                 candidate.PushBack(probe, got);
-                                newStream   = candidate;
-                                tempCreated = null;
+                                newStream = candidate;
                                 break;
                             }
                             candidate.Dispose();
@@ -166,7 +235,7 @@ namespace AuroraPlayer
                         catch { }
                     }
                     if (newStream != null) break;
-                    if (tempCreated != null) { try { File.Delete(tempCreated); } catch { } tempCreated = null; }
+                    if (deleteAfter) try { File.Delete(pathVar); } catch { }
                 }
 
                 // Fallback: с начала файла
@@ -204,10 +273,13 @@ namespace AuroraPlayer
                     {
                         surroundRef.ReplaceSource(seekProvider);
                         _audioOutput.SetSource(volumeRef);
-                        if (wasPlaying) _audioOutput.Play();
+                        bool shouldPlay = wasPlaying || _pendingPlayAfterFfmpegSeek;
+                        _pendingPlayAfterFfmpegSeek = false;
+                        if (shouldPlay) { _audioOutput.Play(); SetPlaying(true); }
                     }
                     else
                     {
+                        _pendingPlayAfterFfmpegSeek = false;
                         // Цепочка уже другая — выбрасываем устаревший поток
                         newStream?.Dispose();
                     }
@@ -219,21 +291,9 @@ namespace AuroraPlayer
 
         private static FfmpegDecodeStream CreateReadableFfmpegStream(string ffmpeg, string path, TimeSpan seekTo = default)
         {
+            // Не-ASCII пути (кириллица и т.п.) обрабатываются внутри FfmpegDecodeStream
+            // через stdin pipe — файл подаётся в ffmpeg напрямую, без копирования.
             string workingPath = path;
-            string? asciiCopy  = null;
-
-            if (FfmpegService.PathHasNonAscii(path))
-            {
-                try
-                {
-                    string ext   = IOPath.GetExtension(path);
-                    asciiCopy    = IOPath.Combine(FfmpegService.GetSafeAsciiTempPath(),
-                                                   $"aurora_{Guid.NewGuid():N}{ext}");
-                    File.Copy(path, asciiCopy, true);
-                    workingPath  = asciiCopy;
-                }
-                catch { asciiCopy = null; workingPath = path; }
-            }
 
             string ext2  = IOPath.GetExtension(path);
             bool   isApe = ext2.Equals(".ape", StringComparison.OrdinalIgnoreCase);
@@ -259,16 +319,13 @@ namespace AuroraPlayer
                 {
                     var stream = new FfmpegDecodeStream(ffmpeg, workingPath, hint,
                         seekTo: seekTo,
-                        skipInitialBytes: skip,
-                        deletePathOnDispose: asciiCopy);
+                        skipInitialBytes: skip);
                     EnsureFfmpegStreamReadable(stream, path);
-                    if (asciiCopy != null) { asciiCopy = null; } // transferred to stream
                     return stream;
                 }
                 catch (Exception ex) { last = ex; }
             }
 
-            if (asciiCopy != null) try { File.Delete(asciiCopy); } catch { }
             throw last ?? new Exception($"Не удалось открыть {IOPath.GetFileName(path)} через ffmpeg.");
         }
 
@@ -294,83 +351,9 @@ namespace AuroraPlayer
             stream.PushBack(probe, got);
         }
 
-        private static string? TryDecodeEntireFileToWavUsingFfmpeg(
-            string ffmpeg, string originalPath, out string lastError)
-        {
-            lastError = "";
-            string ext    = IOPath.GetExtension(originalPath);
-            string safeDir = FfmpegService.GetSafeAsciiTempPath();
-            string wavOut  = IOPath.Combine(safeDir, $"aurora_{Guid.NewGuid():N}.wav");
-            string lastErr = "";
-
-            var hints = new List<FfmpegInputHint> { FfmpegInputHint.Auto };
-            if (ext.Equals(".ape", StringComparison.OrdinalIgnoreCase)) hints.Add(FfmpegInputHint.Ape);
-            else if (ext.Equals(".wv", StringComparison.OrdinalIgnoreCase)) hints.Add(FfmpegInputHint.Wavpack);
-
-            foreach (var (pathVar, deleteAfter) in FfmpegService.BuildInputPathVariants(originalPath))
-            {
-                try
-                {
-                    foreach (var hint in hints)
-                    {
-                        try { if (File.Exists(wavOut)) File.Delete(wavOut); } catch { }
-                        if (RunFfmpegDecodeToWavFile(ffmpeg, pathVar, hint, wavOut, 0, out string err))
-                            return wavOut;
-                        if (!string.IsNullOrEmpty(err))
-                        {
-                            FfmpegService.AppendDecodeLog(
-                                $"WAV fail file='{originalPath}' variant='{pathVar}' hint='{hint}' err='{err}'");
-                            lastErr = err;
-                        }
-                    }
-                }
-                finally { if (deleteAfter) try { File.Delete(pathVar); } catch { } }
-            }
-
-            lastError = lastErr;
-            try { if (File.Exists(wavOut)) File.Delete(wavOut); } catch { }
-            return null;
-        }
-
-        private static bool RunFfmpegDecodeToWavFile(
-            string ffmpeg, string inputPath, FfmpegInputHint hint,
-            string wavOut, int skipInitialBytes, out string lastError)
-        {
-            lastError = "";
-            string inputFmt = hint switch
-            {
-                FfmpegInputHint.Ape     => "-f ape ",
-                FfmpegInputHint.Wavpack => "-f wavpack ",
-                _                       => ""
-            };
-            string skipArg = skipInitialBytes > 0 ? $"-skip_initial_bytes {skipInitialBytes} " : "";
-            string args = "-y -nostdin -hide_banner -loglevel error -nostats " +
-                          $"-probesize 100M -analyzeduration 100M " +
-                          $"{inputFmt}{skipArg}-i \"{inputPath}\" -vn -sn -dn " +
-                          $"-ar {MainWindow.FfmpegOutputSampleRate} -ac {MainWindow.FfmpegOutputChannels} " +
-                          $"-c:a pcm_f32le -f wav \"{wavOut}\"";
-            try
-            {
-                var sb = new System.Text.StringBuilder();
-                using var p = new System.Diagnostics.Process
-                {
-                    StartInfo = new System.Diagnostics.ProcessStartInfo(ffmpeg, args)
-                    {
-                        UseShellExecute       = false,
-                        CreateNoWindow        = true,
-                        RedirectStandardError = true,
-                        WorkingDirectory      = FfmpegService.GetSafeAsciiTempPath(),
-                    },
-                };
-                p.ErrorDataReceived += (_, e) => { if (!string.IsNullOrEmpty(e.Data)) lock (sb) sb.AppendLine(e.Data); };
-                p.Start();
-                p.BeginErrorReadLine();
-                if (!p.WaitForExit(600_000)) { try { p.Kill(); } catch { } return false; }
-                lastError = sb.ToString().Trim();
-                return p.ExitCode == 0 && File.Exists(wavOut) && new System.IO.FileInfo(wavOut).Length > 200;
-            }
-            catch (Exception ex) { lastError = ex.Message; return false; }
-        }
+        // TryDecodeEntireFileToWavUsingFfmpeg и RunFfmpegDecodeToWavFile удалены.
+        // APE/WV теперь декодируется через ApeRingBufferStream (ring buffer в памяти).
+        // Запись temp WAV на диск C: исключена полностью.
 
     }
 }

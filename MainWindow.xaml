@@ -6,7 +6,6 @@
         xmlns:local="clr-namespace:AuroraPlayer"
         mc:Ignorable="d"
         Title="Aurora Player"
-        Icon="pack://application:,,,/app.ico"
         Height="680" Width="420"
         WindowStyle="None"
         AllowsTransparency="True"
@@ -35,25 +34,25 @@
         <Color           x:Key="CyanColor"   >#00E5CC</Color>
 
         <!-- ══ НЕОН ПУЛЬС ══ -->
-        <Storyboard x:Key="NeonPulseViolet" RepeatBehavior="Forever">
+        <Storyboard x:Key="NeonPulseViolet" RepeatBehavior="Forever" Timeline.DesiredFrameRate="20">
             <DoubleAnimation Storyboard.TargetProperty="(UIElement.Effect).(DropShadowEffect.BlurRadius)"
                              From="6" To="18" Duration="0:0:3.5" AutoReverse="True"/>
             <DoubleAnimation Storyboard.TargetProperty="(UIElement.Effect).(DropShadowEffect.Opacity)"
                              From="0.5" To="0.9" Duration="0:0:3.5" AutoReverse="True"/>
         </Storyboard>
-        <Storyboard x:Key="NeonPulsePink" RepeatBehavior="Forever">
+        <Storyboard x:Key="NeonPulsePink" RepeatBehavior="Forever" Timeline.DesiredFrameRate="20">
             <DoubleAnimation Storyboard.TargetProperty="(UIElement.Effect).(DropShadowEffect.BlurRadius)"
                              From="4" To="14" Duration="0:0:4.0" AutoReverse="True"/>
             <DoubleAnimation Storyboard.TargetProperty="(UIElement.Effect).(DropShadowEffect.Opacity)"
                              From="0.4" To="0.85" Duration="0:0:4.0" AutoReverse="True"/>
         </Storyboard>
-        <Storyboard x:Key="NeonPulseCyan" RepeatBehavior="Forever">
+        <Storyboard x:Key="NeonPulseCyan" RepeatBehavior="Forever" Timeline.DesiredFrameRate="20">
             <DoubleAnimation Storyboard.TargetProperty="(UIElement.Effect).(DropShadowEffect.BlurRadius)"
                              From="4" To="12" Duration="0:0:5.0" AutoReverse="True"/>
             <DoubleAnimation Storyboard.TargetProperty="(UIElement.Effect).(DropShadowEffect.Opacity)"
                              From="0.3" To="0.75" Duration="0:0:5.0" AutoReverse="True"/>
         </Storyboard>
-        <Storyboard x:Key="NeonPulseViz" RepeatBehavior="Forever">
+        <Storyboard x:Key="NeonPulseViz" RepeatBehavior="Forever" Timeline.DesiredFrameRate="20">
             <DoubleAnimation Storyboard.TargetProperty="(UIElement.Effect).(DropShadowEffect.BlurRadius)"
                              From="5" To="14" Duration="0:0:4.0" AutoReverse="True"/>
             <DoubleAnimation Storyboard.TargetProperty="(UIElement.Effect).(DropShadowEffect.Opacity)"
@@ -1071,7 +1070,6 @@
         </Border>
     </Grid>
 </Window>
-
 
 
 

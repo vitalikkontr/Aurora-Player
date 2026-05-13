@@ -1,54 +1,93 @@
-# 🎵 Aurora Player
+<img width="3245" height="2306" alt="aurora_player" src="https://github.com/user-attachments/assets/3d0ffd69-6075-4862-9d0d-a562721cee84" />
 
-Стильный музыкальный плеер для Windows, написанный на C# WPF.
+## 🎵 Aurora Player
 
----
-
-## ✨ Возможности
-
-- 🎵 Поддержка форматов: MP3, FLAC, WAV, AIFF, OGG, OPUS, M4A, AAC, WMA, APE и другие
-- 📁 Открытие целой папки с музыкой (включая подпапки)
-- 🎨 Встроенные обложки альбомов из тегов файла
-- ⏭️ Shuffle, Repeat, Playlist
-- 📻 **Мини-режим** — компактная полоска как в Winamp (кнопка «─» вверху слева)
-- 🎛️ Анимированный визуализатор и EQ-индикатор
-- 🪟 Прозрачное окно без рамок, перетаскивается за любую часть
+Музыкальный плеер для Windows с поддержкой широкого спектра аудиоформатов, эквалайзером, микшером каналов и настраиваемой цветовой темой.
 
 ---
 
-## 🚀 Как запустить (сборка из исходников)
+## 📋 Системные требования
 
-### Требования
-- **Windows 10/11**
-- **[.NET 8 SDK](https://dotnet.microsoft.com/download/dotnet/8.0)** (скачать бесплатно)
-
----
-
-## 🎮 Управление
-
-| Действие | Как |
-|----------|-----|
-| Открыть папку | Кнопка 📁 вверху |
-| Добавить файлы | Кнопка ➕ вверху |
-| Play / Pause | Большая кнопка по центру |
-| Следующий трек | ⏭ или двойной клик в плейлисте |
-| Перемотка | Кликни по прогресс-бару |
-| Громкость | Ползунок внизу |
-| Мини-режим | Кнопка «─» в заголовке |
-| Развернуть | Кнопка ↕ в мини-режиме |
+- **ОС:** Windows 10 / Windows 11
+- **Архитектура:** x64
+- **DirectX:** поддержка DirectX 9 или выше (для WPF-интерфейса)
 
 ---
 
-## 📦 Зависимости (устанавливаются автоматически)
-- **TagLibSharp** — чтение тегов и обложек из аудиофайлов
+## ⚙️ Зависимости
+
+### .NET Runtime
+
+Для запуска плеера необходим **.NET 8 Desktop Runtime**:
+
+👉 [Скачать .NET 8 Desktop Runtime](https://dotnet.microsoft.com/download/dotnet/8)
+
+Выбери: **Run desktop apps** → **x64** → **Download**
 
 ---
 
-## 🔧 Технологии
-- C# 12 / .NET 8
-- WPF (Windows Presentation Foundation)
-- MediaPlayer (встроенный в Windows)
-- TagLibSharp
+### ffmpeg.exe
+
+Aurora Player использует **ffmpeg** для воспроизведения форматов, не поддерживаемых нативно (FLAC, AAC, OPUS, MKV и др.).
+
+👉 **[Скачать ffmpeg для Windows](https://www.gyan.dev/ffmpeg/builds/ffmpeg-release-essentials.zip)**
+
+**Установка:**
+1. Скачай архив по ссылке выше
+2. Распакуй архив
+3. Найди файл `ffmpeg.exe` внутри папки `bin/`
+4. Скопируй `ffmpeg.exe` в папку рядом с `AuroraPlayer.exe`
+
+---
+
+## 📥 Установка
+
+1. [Скачайте последнюю версию](https://github.com/vitalikkontr/Aurora-Player/releases/tag/AuroraPlayer)
+2. Запустите установщик AuroraPlayerSetup.exe
+3. Следуйте инструкциям мастера установки
+
+---
+
+## 📦 NuGet-пакеты (для разработчиков)
+
+Подтягиваются автоматически при сборке:
+
+| Пакет | Назначение |
+|---|---|
+| NAudio | Воспроизведение аудио (WASAPI, WinMM, ASIO) |
+| NAudio.Vorbis | Поддержка формата `.ogg` |
+| NVorbis | Декодер Vorbis |
+| TagLibSharp | Чтение тегов (исполнитель, обложка, название трека) |
+
+---
+
+## 🔨 Сборка из исходников
+
+**Требования:**
+- [.NET 8 SDK](https://dotnet.microsoft.com/download/dotnet/8)
+- Visual Studio 2022 или VS Code с расширением C#
+
+**Команды:**
+```bash
+git clone https://github.com/vitalikkontr/Aurora-Player.git
+cd Aurora-Player
+dotnet restore
+dotnet build
+```
+
+> После сборки не забудь положить `ffmpeg.exe` рядом с собранным `AuroraPlayer.exe`
+
+---
+
+## 🎯 Поддерживаемые форматы
+
+MP3, FLAC, OGG, AAC, WAV, OPUS, M4A, WMA и другие форматы через ffmpeg.
+
+---
+
+## 📄 Лицензия
+
+MIT
 
 ---
 

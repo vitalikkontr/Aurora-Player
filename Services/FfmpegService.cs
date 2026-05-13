@@ -13,8 +13,11 @@ namespace AuroraPlayer
     /// </summary>
     public static class FfmpegService
     {
-        public const int  ProbeRetryCount   = 900; // 900 × 50ms = 45s
-        public const int  ProbeRetryDelayMs = 50;
+        public const int  ProbeRetryCount      = 60;  // 60 × 50ms = 3s (было 900 × 50ms = 45s)
+        public const int  ProbeRetryDelayMs    = 50;
+        // APE через именованный pipe делает seek в конец файла при инициализации —
+        // это невозможно через однонаправленный pipe. Поэтому APE/WV с кириллическим
+        // путём сразу открываем через ApeRingBufferStream минуя FfmpegDecodeStream.
 
         private static readonly object _apeCacheSync = new();
         private static readonly Dictionary<string, string> _apeNormalizedCache =
@@ -184,7 +187,18 @@ namespace AuroraPlayer
                 if (!File.Exists(tmp) || new FileInfo(tmp).Length < 128)
                 { try { File.Delete(tmp); } catch { } return false; }
 
-                lock (_apeCacheSync) { _apeNormalizedCache[originalPath] = tmp; }
+                lock (_apeCacheSync)
+                {
+                    // Лимит кэша: не более 10 записей, выбрасываем самую старую
+                    if (_apeNormalizedCache.Count >= 10)
+                    {
+                        string oldest = _apeNormalizedCache.Keys.First();
+                        if (_apeNormalizedCache.TryGetValue(oldest, out string? oldPath))
+                            try { File.Delete(oldPath); } catch { }
+                        _apeNormalizedCache.Remove(oldest);
+                    }
+                    _apeNormalizedCache[originalPath] = tmp;
+                }
                 normalizedApePath = tmp;
                 return true;
             }
@@ -201,6 +215,42 @@ namespace AuroraPlayer
             }
         }
 
+        /// <summary>
+        /// Удаляет все временные файлы aurora_* оставшиеся от прошлых сессий (после крэшей).
+        /// Вызывать один раз при старте приложения.
+        /// </summary>
+        public static void CleanupStaleTempFiles()
+        {
+            try
+            {
+                string tempDir = GetSafeAsciiTempPath();
+                foreach (string file in Directory.GetFiles(tempDir, "aurora_*"))
+                {
+                    try
+                    {
+                        // Пропускаем файлы моложе 60 секунд — они могут быть нашими текущими
+                        if ((DateTime.UtcNow - File.GetLastWriteTimeUtc(file)).TotalSeconds < 60) continue;
+                        File.Delete(file);
+                    }
+                    catch { }
+                }
+                // C:\Temp тоже чистим если использовался как fallback
+                if (tempDir != @"C:\Temp" && Directory.Exists(@"C:\Temp"))
+                {
+                    foreach (string file in Directory.GetFiles(@"C:\Temp", "aurora_*"))
+                    {
+                        try
+                        {
+                            if ((DateTime.UtcNow - File.GetLastWriteTimeUtc(file)).TotalSeconds < 60) continue;
+                            File.Delete(file);
+                        }
+                        catch { }
+                    }
+                }
+            }
+            catch { }
+        }
+
         public static List<(string Path, bool DeleteAfter)> BuildInputPathVariants(
             string originalPath, bool includeNormalizedApe = true)
         {
@@ -212,12 +262,8 @@ namespace AuroraPlayer
             if (TryGetWindowsShortPath(originalPath) is string shortP) Add(shortP, false);
             if (includeNormalizedApe && TryCreateApeWithoutLeadingId3(originalPath, out string norm))
                 Add(norm, false);
-            if (PathHasNonAscii(originalPath))
-            {
-                string ext = IOPath.GetExtension(originalPath);
-                string tmp = IOPath.Combine(GetSafeAsciiTempPath(), $"aurora_in_{Guid.NewGuid():N}{ext}");
-                try { File.Copy(originalPath, tmp, true); Add(tmp, true); } catch { }
-            }
+            // Копирование файла в temp удалено — FfmpegDecodeStream передаёт
+            // кириллические пути через именованный Windows pipe без копирования.
             return list;
         }
 
