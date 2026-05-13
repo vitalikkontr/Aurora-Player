@@ -72,9 +72,8 @@ namespace AuroraPlayer
             if (!_isPlaying) return;
             var bars = new[] { Eq1, Eq2, Eq3, Eq4, Eq5 };
 
-            float[]? fft     = null;
-            bool      hasData = _fftAgg != null && _fftAgg.HasData;
-            if (hasData) fft = _fftAgg!.FftData;
+            float[]? fft = GetFftData();
+            bool hasData = _fftAgg != null && _fftAgg.HasData && fft != null;
 
             if (hasData && fft != null)
             {
@@ -108,9 +107,8 @@ namespace AuroraPlayer
         private void VizTimer_Tick(object? s, EventArgs e)
         {
             double h = VisualizerCanvas.ActualHeight > 0 ? VisualizerCanvas.ActualHeight : 36;
-            float[]? fft = null;
-            bool hasData = _fftAgg != null && _fftAgg.HasData && _isPlaying;
-            if (hasData) fft = _fftAgg!.FftData;
+            float[]? fft = GetFftData();
+            bool hasData = _fftAgg != null && _fftAgg.HasData && _isPlaying && fft != null;
 
             if (hasData && fft != null)
             {

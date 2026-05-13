@@ -30,7 +30,7 @@ namespace AuroraPlayer
         private WaveStream?         _mfReader;
         private CueSegmentProvider? _cueSegment;
         private FfmpegCueSegment?   _ffmpegCueSegment;
-        private string?             _ffmpegDecodeTempWavPath;
+        // _ffmpegDecodeTempWavPath: удалён — temp WAV заменён ApeRingBufferStream (ring buffer в памяти).
 
         // Кеш открытого FLAC/WAV файла
         private AudioFileReader? _cachedAudioReader;
@@ -61,6 +61,7 @@ namespace AuroraPlayer
         private int    _playSession;
         private int    _albumArtSession;
         private double? _pendingSeekOnNextPlay;
+        private bool    _pendingPlayAfterFfmpegSeek;
 
         // ─── Аудио-устройство ─────────────────────────────────────────────────────
         private string? _audioDeviceName = null; // null = системное по умолчанию
@@ -78,6 +79,7 @@ namespace AuroraPlayer
         private readonly DispatcherTimer _timer    = new();
         private readonly DispatcherTimer _vizTimer = new();
         private readonly DispatcherTimer _eqTimer  = new();
+        private readonly float[] _vizFftSnapshot  = new float[512];
 
         // ─── EQ ───────────────────────────────────────────────────────────────────
         private static readonly (string Name, float[] Gains)[] EqPresets =
@@ -198,9 +200,10 @@ namespace AuroraPlayer
         {
             try
             {
-                string iconPath = IOPath.Combine(
-                    IOPath.GetDirectoryName(Environment.ProcessPath ?? "") ?? "", "app.ico");
-                if (File.Exists(iconPath)) Icon = new BitmapImage(new Uri(iconPath, UriKind.Absolute));
+                // Иконка встроена как Resource в сборку — грузим через pack URI.
+                // Это работает при любом режиме публикации (SelfContained, SingleFile и т.д.)
+                // в отличие от File.Exists(iconPath), который ищет файл рядом с exe.
+                Icon = new BitmapImage(new Uri("pack://application:,,,/app.ico", UriKind.Absolute));
             }
             catch { }
 
@@ -210,6 +213,10 @@ namespace AuroraPlayer
             FfmpegService.AppendDecodeLog("STARTUP " + msg.Replace("\n", " | "));
             if (ffmpeg == null)
                 MessageBox.Show(msg, "Aurora — диагностика ffmpeg", MessageBoxButton.OK, MessageBoxImage.Warning);
+
+            // Удаляем temp-файлы aurora_* оставшиеся от прошлых сессий (после крэшей)
+            // Делаем в фоне чтобы не тормозить запуск
+            Task.Run(FfmpegService.CleanupStaleTempFiles);
 
             // WM hook — WM_GETMINMAXINFO + перехват SC_MINIMIZE для мини-плеера
             var hwndSrc = System.Windows.Interop.HwndSource.FromHwnd(
@@ -323,7 +330,11 @@ namespace AuroraPlayer
         }
 
         // ─── IVisualizerDataProvider ──────────────────────────────────────────────
-        public float[]? GetFftData() => _fftAgg?.FftData;
+        public float[]? GetFftData()
+        {
+            if (_fftAgg == null) return null;
+            return _fftAgg.TryCopyFftData(_vizFftSnapshot) ? _vizFftSnapshot : null;
+        }
         public bool     IsPlaying   => _isPlaying;
 
         public string CurrentTrackTitle =>

@@ -276,15 +276,17 @@ namespace AuroraPlayer
         private readonly ISampleProvider _source;
         private readonly float[]         _fftBuffer;
         private readonly Complex[]       _fftComplex;
+        private readonly object          _fftLock = new();
         private int                      _fftPos;
         private int                      _readCount;
-        // Пересчитываем FFT не чаще чем раз в 3 буфера (~60fps при 48kHz/1024)
+        // Пересчитываем FFT на каждом буфере для более точного ритма визуализации.
         private const int FftSize        = 1024;
-        private const int FftSkipBuffers = 2; // пропускаем N буферов между пересчётами
+        private const int FftSkipBuffers = 0;
 
         public WaveFormat WaveFormat => _source.WaveFormat;
         public float[]    FftData    { get; } = new float[FftSize / 2];
-        public bool       HasData    { get; private set; }
+        private volatile bool _hasData;
+        public bool       HasData    => _hasData;
 
         public FftAggregator(ISampleProvider source)
         {
@@ -317,12 +319,29 @@ namespace AuroraPlayer
                     for (int j = 0; j < FftSize; j++)
                         _fftComplex[j] = new Complex(_fftBuffer[j], 0);
                     Fft(_fftComplex);
-                    for (int j = 0; j < FftSize / 2; j++)
-                        FftData[j] = (float)_fftComplex[j].Magnitude / FftSize;
-                    HasData = true;
+                    lock (_fftLock)
+                    {
+                        for (int j = 0; j < FftSize / 2; j++)
+                            FftData[j] = (float)_fftComplex[j].Magnitude / FftSize;
+                        _hasData = true;
+                    }
                 }
             }
             return read;
+        }
+
+        public bool TryCopyFftData(float[] destination)
+        {
+            if (destination == null || destination.Length == 0) return false;
+            lock (_fftLock)
+            {
+                if (!_hasData) return false;
+                int len = Math.Min(destination.Length, FftData.Length);
+                Array.Copy(FftData, destination, len);
+                if (destination.Length > len)
+                    Array.Clear(destination, len, destination.Length - len);
+                return true;
+            }
         }
 
         private static void Fft(Complex[] x)

@@ -3,6 +3,7 @@ using NAudio.Wave;
 using System;
 using System.Diagnostics;
 using System.IO;
+using System.IO.Pipes;
 using System.Text;
 using System.Threading;
 using IOPath = System.IO.Path;
@@ -18,6 +19,7 @@ namespace AuroraPlayer
     {
         private Process?   _proc;
         private Stream?    _stdout;
+        private Thread?    _stdinThread;  // поток записи файла в stdin ffmpeg (для не-ASCII путей)
         private readonly WaveFormat       _fmt;
         private long       _bytesRead;
         private long       _startBytes;
@@ -118,8 +120,39 @@ namespace AuroraPlayer
             string skipArg = _skipInitialBytes > 0 ? $"-skip_initial_bytes {_skipInitialBytes} " : "";
             string seekArg = offset > TimeSpan.Zero ? $"-ss {seconds} " : "";
 
+            // Named pipe gives a non-seekable linear input.
+            // APE/WV may seek backward while decoding; over a pipe this can
+            // lead to mid-track decode errors ("Invalid data...").
+            // For APE/WV keep direct file input even for non-ASCII paths.
+            bool pathHasNonAscii = FfmpegService.PathHasNonAscii(_inputPath);
+            bool formatNeedsSeekableInput =
+                _inputHint == FfmpegInputHint.Ape || _inputHint == FfmpegInputHint.Wavpack;
+            bool useNamedPipe = pathHasNonAscii && !formatNeedsSeekableInput;
+
+            string ffmpegInputPath;
+            NamedPipeServerStream? namedPipe = null;
+
+            if (useNamedPipe)
+            {
+                string pipeName = $"aurora_{Guid.NewGuid():N}";
+                ffmpegInputPath = $@"\\.\pipe\{pipeName}";
+                namedPipe = new NamedPipeServerStream(
+                    pipeName,
+                    PipeDirection.Out,
+                    1,
+                    PipeTransmissionMode.Byte,
+                    PipeOptions.Asynchronous,
+                    0, 65536);
+            }
+            else
+            {
+                ffmpegInputPath = _inputPath;
+            }
+
+            string inputArg = $"{inputFmt}{skipArg}-i \"{ffmpegInputPath}\" {seekArg}";
+
             string args = $"-loglevel error -nostats -hide_banner -nostdin " +
-                          $"{inputFmt}{skipArg}-i \"{_inputPath}\" {seekArg}" +
+                          inputArg +
                           $"-vn -sn -dn -sample_fmt flt -f f32le " +
                           $"-ar {MainWindow.FfmpegOutputSampleRate} -ac {MainWindow.FfmpegOutputChannels} pipe:1";
 
@@ -127,10 +160,10 @@ namespace AuroraPlayer
             {
                 StartInfo = new ProcessStartInfo(_ffmpegPath, args)
                 {
-                    UseShellExecute       = false,
+                    UseShellExecute        = false,
                     RedirectStandardOutput = true,
                     RedirectStandardError  = true,
-                    CreateNoWindow        = true,
+                    CreateNoWindow         = true,
                 },
                 EnableRaisingEvents = true,
             };
@@ -147,13 +180,48 @@ namespace AuroraPlayer
             _prefetched       = Array.Empty<byte>();
             _prefetchedOffset = 0;
             _prefetchedCount  = 0;
+
+            // Фоновый поток: ждём подключения ffmpeg к pipe, затем пишем файл
+            if (namedPipe != null)
+            {
+                string pathToFeed   = _inputPath;
+                long   skipBytes    = _skipInitialBytes > 0 ? _skipInitialBytes : 0;
+                var    pipeToFeed   = namedPipe;
+                _stdinThread = new Thread(() =>
+                {
+                    try
+                    {
+                        pipeToFeed.WaitForConnection();
+                        using var fs = new FileStream(pathToFeed, FileMode.Open,
+                            FileAccess.Read, FileShare.Read, 65536);
+                        if (skipBytes > 0) fs.Seek(skipBytes, SeekOrigin.Begin);
+                        fs.CopyTo(pipeToFeed, 65536);
+                    }
+                    catch { }
+                    finally
+                    {
+                        try { pipeToFeed.Dispose(); } catch { }
+                    }
+                })
+                { IsBackground = true, Name = "ffmpeg-pipe-feeder" };
+                _stdinThread.Start();
+            }
+        }
+
+        private void KillProcess()
+        {
+            try { _stdout?.Dispose(); }  catch { }
+            try { _proc?.Kill(); }       catch { }
+            try { _proc?.Dispose(); }    catch { }
+            // stdin-feeder завершится сам когда stdin закроется при Kill процесса,
+            // но на всякий случай ждём не дольше 200мс
+            try { _stdinThread?.Join(200); } catch { }
+            _stdinThread = null;
         }
 
         private void RestartAtBytes(long absoluteBytes)
         {
-            try { _stdout?.Dispose(); } catch { }
-            try { _proc?.Kill(); }     catch { }
-            try { _proc?.Dispose(); }  catch { }
+            KillProcess();
             StartProcess(TimeSpan.FromSeconds(absoluteBytes / (double)_fmt.AverageBytesPerSecond));
         }
 
@@ -161,20 +229,19 @@ namespace AuroraPlayer
         {
             base.Dispose(disposing);
             if (!disposing) return;
-            try { _stdout?.Dispose(); }  catch { }
-            try { _proc?.Kill(); }       catch { }
-            try { _proc?.Dispose(); }    catch { }
+            KillProcess();
             if (_deletePathOnDispose != null) try { File.Delete(_deletePathOnDispose); } catch { }
             if (_extraDeletePath     != null) try { File.Delete(_extraDeletePath); }     catch { }
         }
     }
 
     // ─── FfmpegCueSegment ────────────────────────────────────────────────────────
-    // Аналог CueSegmentProvider но для FfmpegDecodeStream (APE/WV).
+    // Аналог CueSegmentProvider но для потоков ffmpeg (APE/WV).
+    // Работает с любым WaveStream: FfmpegDecodeStream и ApeRingBufferStream.
     // Физически читает и пропускает сэмплы до start — seek в ffmpeg не работает надёжно.
     internal sealed class FfmpegCueSegment : ISampleProvider
     {
-        private readonly FfmpegDecodeStream  _stream;
+        private readonly WaveStream          _stream;
         private readonly FfmpegFloatProvider _provider;
         private readonly long   _startSample;
         private readonly long   _endSample;
@@ -188,7 +255,8 @@ namespace AuroraPlayer
         public double PositionSeconds =>
             _seekOffsetSeconds + (double)_position / WaveFormat.Channels / WaveFormat.SampleRate;
 
-        public FfmpegCueSegment(FfmpegDecodeStream stream, TimeSpan start, TimeSpan end,
+        // Принимает любой WaveStream (FfmpegDecodeStream или ApeRingBufferStream).
+        public FfmpegCueSegment(WaveStream stream, TimeSpan start, TimeSpan end,
                                 double seekOffsetSeconds = 0.0)
         {
             _stream            = stream;
