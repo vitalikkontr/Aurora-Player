@@ -1,4 +1,4 @@
-<img width="775" height="611" alt="1Aurora Player box logo mockup" src="https://github.com/user-attachments/assets/fc8733f7-764d-408c-8651-087cba753152" />
+<img width="775" height="611" alt="1Aurora Player box logo mockup" src="https://github.com/user-attachments/assets/06e8e064-b76e-495b-8d22-edc874efa0df" />
 
 ## 🎵 Aurora Player
 
