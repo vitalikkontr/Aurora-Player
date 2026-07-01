@@ -1,5 +1,5 @@
 #define MyAppName      "Aurora Player"
-#define MyAppVersion   "1.3.0.0"
+#define MyAppVersion   "1.4.0.0"
 #define MyAppPublisher "Виталий Николаевич (vitalikkontr)"
 #define MyAppExeName   "AuroraPlayer.exe"
 #define MyAppURL       "https://github.com/vitalikkontr"
@@ -14,6 +14,9 @@ AppPublisherURL={#MyAppURL}
 AppSupportURL={#MyAppURL}
 AppUpdatesURL={#MyAppURL}
 AppCopyright=© 2026 Виталий Николаевич (vitalikkontr)
+
+; Путь к лицензии
+LicenseFile=Assets\LICENSE.rtf
 
 DefaultDirName={autopf}\{#MyAppName}
 DefaultGroupName={#MyAppName}
@@ -36,8 +39,6 @@ DisableProgramGroupPage=yes
 ChangesAssociations=yes
 
 LanguageDetectionMethod=uilanguage
-
-; Не запускать установщик после компиляции
 CreateAppDir=yes
 AlwaysShowComponentsList=no
 
@@ -62,9 +63,9 @@ Name: "{autodesktop}\{#MyAppName}"; Filename: "{app}\{#MyAppExeName}"; Tasks: de
 [Registry]
 Root: HKLM; Subkey: "Software\Classes\AuroraPlayer.AudioFile"; ValueType: string; ValueName: ""; ValueData: "Аудиофайл Aurora Player"; Flags: uninsdeletekey
 Root: HKLM; Subkey: "Software\Classes\AuroraPlayer.AudioFile\DefaultIcon"; ValueType: string; ValueName: ""; ValueData: "{app}\{#MyAppExeName},0"
-Root: HKLM; Subkey: "Software\Classes\AuroraPlayer.AudioFile\shell\open"; ValueType: string; ValueName: ""; ValueData: "Открыть"
 Root: HKLM; Subkey: "Software\Classes\AuroraPlayer.AudioFile\shell\open\command"; ValueType: string; ValueName: ""; ValueData: """{app}\{#MyAppExeName}"" ""%1"""
 
+; Регистрация расширений
 Root: HKLM; Subkey: "Software\Classes\.mp3\OpenWithProgids"; ValueType: string; ValueName: "AuroraPlayer.AudioFile"; ValueData: ""; Tasks: contextmenu_files; Flags: uninsdeletevalue
 Root: HKLM; Subkey: "Software\Classes\.flac\OpenWithProgids"; ValueType: string; ValueName: "AuroraPlayer.AudioFile"; ValueData: ""; Tasks: contextmenu_files; Flags: uninsdeletevalue
 Root: HKLM; Subkey: "Software\Classes\.wav\OpenWithProgids"; ValueType: string; ValueName: "AuroraPlayer.AudioFile"; ValueData: ""; Tasks: contextmenu_files; Flags: uninsdeletevalue
@@ -80,10 +81,25 @@ Root: HKLM; Subkey: "Software\Classes\.aiff\OpenWithProgids"; ValueType: string;
 Root: HKLM; Subkey: "Software\Classes\.aif\OpenWithProgids"; ValueType: string; ValueName: "AuroraPlayer.AudioFile"; ValueData: ""; Tasks: contextmenu_files; Flags: uninsdeletevalue
 Root: HKLM; Subkey: "Software\Classes\.m4b\OpenWithProgids"; ValueType: string; ValueName: "AuroraPlayer.AudioFile"; ValueData: ""; Tasks: contextmenu_files; Flags: uninsdeletevalue
 
+; Контекстное меню папок
 Root: HKLM; Subkey: "Software\Classes\Directory\shell\AuroraPlayer"; ValueType: string; ValueName: ""; ValueData: "Открыть в Aurora Player"; Tasks: contextmenu_folder; Flags: uninsdeletekey
 Root: HKLM; Subkey: "Software\Classes\Directory\shell\AuroraPlayer"; ValueType: string; ValueName: "Icon"; ValueData: "{app}\{#MyAppExeName},0"; Tasks: contextmenu_folder
 Root: HKLM; Subkey: "Software\Classes\Directory\shell\AuroraPlayer\command"; ValueType: string; ValueName: ""; ValueData: """{app}\{#MyAppExeName}"" ""%1"""; Tasks: contextmenu_folder
 
-Root: HKLM; Subkey: "Software\Classes\Directory\Background\shell\AuroraPlayer"; ValueType: string; ValueName: ""; ValueData: "Открыть в Aurora Player"; Tasks: contextmenu_folder; Flags: uninsdeletekey
-Root: HKLM; Subkey: "Software\Classes\Directory\Background\shell\AuroraPlayer"; ValueType: string; ValueName: "Icon"; ValueData: "{app}\{#MyAppExeName},0"; Tasks: contextmenu_folder
-Root: HKLM; Subkey: "Software\Classes\Directory\Background\shell\AuroraPlayer\command"; ValueType: string; ValueName: ""; ValueData: """{app}\{#MyAppExeName}"" ""%V"""; Tasks: contextmenu_folder
+[Code]
+// Импорт функции Windows API для обновления иконок в проводнике
+procedure SHChangeNotify(wEventId: Longint; uFlags: UINT; dwItem1, dwItem2: Integer);
+  external 'SHChangeNotify@shell32.dll stdcall';
+
+const
+  SHCNE_ASSOCCHANGED = $08000000;
+  SHCNF_IDLIST = 0;
+
+procedure CurStepChanged(CurStep: TSetupStep);
+begin
+  if CurStep = ssPostInstall then
+  begin
+    // Уведомляем систему об изменении ассоциаций файлов
+    SHChangeNotify(SHCNE_ASSOCCHANGED, SHCNF_IDLIST, 0, 0);
+  end;
+end;

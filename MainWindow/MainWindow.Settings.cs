@@ -1,6 +1,7 @@
 // MainWindow.Settings.cs — сохранение и загрузка настроек
 using System;
 using System.IO;
+using System.Linq;
 using System.Windows;
 
 namespace AuroraPlayer
@@ -72,9 +73,16 @@ namespace AuroraPlayer
                 double winHeight = Height; // одинаково для мини и полного — реальная высота окна
 
                 // Собираем все настройки в один объект — один вызов Save
+                // Сохраняем пути всех треков плейлиста, чтобы восстановить его
+                // даже если файлы были открыты не из папки (через "Открыть файлы").
+                var savedPaths = Playlist.Count > 0
+                    ? Playlist.Select(t => t.Path).ToList()
+                    : null;
+
                 var s = new AppSettings
                 {
                     LastFolder      = _lastFolder,
+                    SavedPaths      = savedPaths,
                     LastIndex       = _currentIndex,
                     LastPosition    = pos,
                     Volume          = _volume,
@@ -205,11 +213,11 @@ namespace AuroraPlayer
                     }
                 }
 
+                int    savedIndex = s.LastIndex;
+                double savedPos   = s.LastPosition;
+
                 if (!string.IsNullOrEmpty(s.LastFolder) && Directory.Exists(s.LastFolder))
                 {
-                    int    savedIndex = s.LastIndex;
-                    double savedPos   = s.LastPosition;
-
                     FfmpegService.AppendDecodeLog(
                         $"LOAD savedIndex={savedIndex} savedPos={savedPos:F3} folder='{s.LastFolder}'");
 
@@ -220,6 +228,27 @@ namespace AuroraPlayer
                         await AddFolderAsync(s.LastFolder,
                             initialIndex: savedIndex >= 0 ? savedIndex : 0,
                             initialSeek:  savedPos > 0 ? savedPos : 0);
+                    });
+                }
+                else if (s.SavedPaths != null && s.SavedPaths.Count > 0)
+                {
+                    // Плейлист был собран из отдельных файлов — восстанавливаем их напрямую.
+                    FfmpegService.AppendDecodeLog(
+                        $"LOAD from SavedPaths count={s.SavedPaths.Count} savedIndex={savedIndex} savedPos={savedPos:F3}");
+
+                    _ = Dispatcher.InvokeAsync(() =>
+                    {
+                        foreach (var path in s.SavedPaths)
+                        {
+                            if (File.Exists(path)) AddTrack(path);
+                        }
+
+                        if (Playlist.Count > 0)
+                        {
+                            int idx = savedIndex >= 0 && savedIndex < Playlist.Count ? savedIndex : 0;
+                            _sessionRestoreDone = true;
+                            LoadTrack(idx, autoPlay: false, seekSeconds: savedPos > 0 ? savedPos : 0);
+                        }
                     });
                 }
             }

@@ -115,12 +115,14 @@ namespace AuroraPlayer
         // FLAC ведем через ffmpeg-path (как APE/WV), потому что на ряде файлов
         // internal AudioFileReader корректно выставляет CurrentTime, но слышимый
         // старт после reopen может идти с начала трека.
+        // .opus декодируется через ffmpeg, т.к. NVorbis (NAudio.Vorbis) поддерживает
+        // только Ogg Vorbis и не может читать Opus-контейнеры.
         private static readonly HashSet<string> MfOnlyExt =
-            new(StringComparer.OrdinalIgnoreCase) { ".ape", ".wv", ".flac" };
+            new(StringComparer.OrdinalIgnoreCase) { ".ape", ".wv", ".flac", ".opus" };
         private static readonly HashSet<string> CacheableExt =
             new(StringComparer.OrdinalIgnoreCase) { ".wav", ".aiff", ".aif" };
         private static readonly HashSet<string> VorbisExt =
-            new(StringComparer.OrdinalIgnoreCase) { ".ogg", ".opus" };
+            new(StringComparer.OrdinalIgnoreCase) { ".ogg" };
 
         // ─── Прочее UI ────────────────────────────────────────────────────────────
         private readonly System.Collections.Generic.List<System.Windows.Shapes.Rectangle> _vizBars = new();

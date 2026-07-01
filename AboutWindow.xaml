@@ -111,7 +111,7 @@
                         <Border.Effect>
                             <DropShadowEffect x:Name="VersionShadow" Color="#7C6BFF" BlurRadius="4" ShadowDepth="0" Opacity="0.4"/>
                         </Border.Effect>
-                        <TextBlock Text="Версия 1.3.0.0" Foreground="#B0A8FF"
+                        <TextBlock Text="Версия 1.4.0.0" Foreground="#B0A8FF"
                                    FontFamily="Syne" FontSize="10" FontWeight="Bold"/>
                     </Border>
 
@@ -125,7 +125,7 @@
                         </Border.Background>
                     </Border>
 
-                    <TextBlock Text="Разработчик" Foreground="#40FFFFFF" FontFamily="DM Sans"
+                    <TextBlock Text="Разработчик :" Foreground="#40FFFFFF" FontFamily="DM Sans"
                                FontSize="10" HorizontalAlignment="Center" Margin="0,0,0,5"/>
 
                     <!-- Developer name -->
@@ -137,7 +137,7 @@
                     </TextBlock>
 
                     <!-- Nickname -->
-                    <TextBlock Text="vitalikkontr" Foreground="#90A89FFF" FontFamily="DM Sans"
+                    <TextBlock Text="( vitalikkontr )" Foreground="#90A89FFF" FontFamily="DM Sans"
                                FontSize="12" HorizontalAlignment="Center" Margin="0,0,0,20">
                         <TextBlock.Effect>
                             <DropShadowEffect x:Name="GithubShadow" Color="#00E5CC" BlurRadius="4" ShadowDepth="0" Opacity="0.35"/>

@@ -40,6 +40,7 @@ namespace AuroraPlayer
             if (dlg.ShowDialog() != true) return;
 
             StopEngine(); DisposeCachedReader(); SetPlaying(false);
+            _lastFolder = null; // файлы открыты по одному — папка не актуальна, восстановление через SavedPaths
             Playlist.Clear(); _currentIndex = -1;
             UpdatePlaylistHeader();
 
