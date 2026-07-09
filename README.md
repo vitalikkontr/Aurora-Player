@@ -91,4 +91,8 @@ MIT
 
 ---
 
-*Aurora Player — сделано с ❤️*
+<div align="center">
+
+## *Aurora Player — сделано с ❤️ в Украине*
+
+</div>
