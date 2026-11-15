@@ -1,6 +1,6 @@
 <div align="center">
 
-<img width="420" alt="Aurora Player Logo" src="https://github.com/user-attachments/assets/06e8e064-b76e-495b-8d22-edc874efa0df" />
+<img width="520" alt="Aurora Player Logo" src="https://github.com/user-attachments/assets/06e8e064-b76e-495b-8d22-edc874efa0df" />
 
 # 🎵 Aurora Player
 
@@ -9,7 +9,7 @@
 <p>
   <a href="https://github.com/vitalikkontr/Aurora-Player/releases/latest"><kbd> ⬇️ Скачать v1.4.5.0 </kbd></a>&nbsp;
   <kbd> 🪟 Windows 10 / 11 (x64) </kbd>&nbsp;
-  <a href="https://dotnet.microsoft.com/download/dotnet/8"><kbd> 🟣 .NET 8.0 </kbd></a>&nbsp;
+  <a href="https://dotnet.microsoft.com/en-us/download/dotnet"><kbd> 🟣 .NET Runtime </kbd></a>&nbsp;
   <kbd> 📄 MIT License </kbd>
 </p>
 
@@ -45,16 +45,16 @@
 | :--- | :--- |
 | **Операционная система** | Windows 10 / Windows 11 (только **x64**) |
 | **Графика** | Видеокарта с поддержкой **DirectX 9** или выше (для аппаратного ускорения WPF) |
-| **Среда выполнения** | [.NET 8 Desktop Runtime (x64)](https://dotnet.microsoft.com/download/dotnet/8) |
+| **Среда выполнения** | [.NET Desktop Runtime (x64)](https://dotnet.microsoft.com/en-us/download/dotnet) |
 
 ---
 
 ## 📥 Установка и настройка
 
-### Шаг 1. Установка .NET 8 Runtime
-Для запуска приложения необходим **.NET 8 Desktop Runtime**:
-1. Перейдите на [страницу загрузки Microsoft .NET 8](https://dotnet.microsoft.com/download/dotnet/8).
-2. В блоке **Run desktop apps** выберите **Download x64** и установите пакет.
+### Шаг 1. Установка .NET Desktop Runtime
+Для запуска приложения необходим **.NET Desktop Runtime**:
+1. Перейдите на [официальную страницу загрузки Microsoft .NET](https://dotnet.microsoft.com/en-us/download/dotnet)[cite: 1].
+2. Выберите нужную версию платформы (например, .NET 8, 10 или новее) и скачайте **Desktop Runtime** разрядности **x64** для Windows.
 
 ### Шаг 2. Установка Aurora Player
 1. Перейдите в раздел [**Releases**](https://github.com/vitalikkontr/Aurora-Player/releases/latest) (ссылка автоматически ведёт на самый свежий релиз).
@@ -75,7 +75,7 @@
 <br>
 
 ### Требования для сборки
-* [.NET 8 SDK](https://dotnet.microsoft.com/download/dotnet/8)
+* [.NET SDK](https://dotnet.microsoft.com/en-us/download/dotnet)[cite: 1]
 * Visual Studio 2022 (с компонентом *Разработка классических приложений .NET*) или VS Code + C# Dev Kit
 
 ### Клонирование и сборка
