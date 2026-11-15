@@ -1,6 +1,6 @@
 <div align="center">
 
-<img width="520" alt="Aurora Player Logo" src="https://github.com/user-attachments/assets/06e8e064-b76e-495b-8d22-edc874efa0df" />
+<img width="620" alt="Aurora Player Logo" src="https://github.com/user-attachments/assets/06e8e064-b76e-495b-8d22-edc874efa0df" />
 
 # 🎵 Aurora Player
 
