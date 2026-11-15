@@ -42,7 +42,7 @@ Aurora Player использует **ffmpeg** для воспроизведен�
 
 ## 📥 Установка
 
-1. [Скачайте последнюю версию]([https://github.com/vitalikkontr/Aurora-Player/releases/tag/v.1.4.5.0])
+1. [Скачайте последнюю версию]([https://github.com/vitalikkontr/Aurora-Player/releases/tag/v%2C1.4.5.0])
 2. Запустите установщик AuroraPlayerSetup.exe
 3. Следуйте инструкциям мастера установки
 
