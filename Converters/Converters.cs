@@ -6,21 +6,31 @@ using System.Windows.Data;
 
 namespace AuroraPlayer
 {
-    /// <summary>null → Visible, не-null → Collapsed (для заглушки)</summary>
+    /// <summary>null / UnsetValue → Visible, не-null → Collapsed (для заглушки)</summary>
     public class NullToVisibilityConverter : IValueConverter
     {
+        private static readonly object VisibleBox = Visibility.Visible;
+        private static readonly object CollapsedBox = Visibility.Collapsed;
+
         public object Convert(object value, Type targetType, object parameter, CultureInfo culture)
-            => value == null ? Visibility.Visible : Visibility.Collapsed;
+            => value == null || ReferenceEquals(value, DependencyProperty.UnsetValue)
+                ? VisibleBox
+                : CollapsedBox;
 
         public object ConvertBack(object value, Type targetType, object parameter, CultureInfo culture)
             => throw new NotImplementedException();
     }
 
-    /// <summary>не-null → Visible, null → Collapsed (для обложки)</summary>
+    /// <summary>не-null → Visible, null / UnsetValue → Collapsed (для обложки)</summary>
     public class NotNullToVisibilityConverter : IValueConverter
     {
+        private static readonly object VisibleBox = Visibility.Visible;
+        private static readonly object CollapsedBox = Visibility.Collapsed;
+
         public object Convert(object value, Type targetType, object parameter, CultureInfo culture)
-            => value != null ? Visibility.Visible : Visibility.Collapsed;
+            => value != null && !ReferenceEquals(value, DependencyProperty.UnsetValue)
+                ? VisibleBox
+                : CollapsedBox;
 
         public object ConvertBack(object value, Type targetType, object parameter, CultureInfo culture)
             => throw new NotImplementedException();

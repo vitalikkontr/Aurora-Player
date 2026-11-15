@@ -1,24 +1,36 @@
+#nullable enable
+
 using System;
+using System.Diagnostics;
 using System.IO;
 using System.IO.Pipes;
 using System.Text;
 using System.Threading;
 using System.Windows;
+using System.Windows.Threading;
 
 namespace AuroraPlayer
 {
     public partial class App : Application
     {
         private const string MutexName = "AuroraPlayer_SingleInstance";
-        private const string PipeName  = "AuroraPlayer_IPC";
 
-        private Mutex?  _mutex;
+        private static readonly Encoding Utf8NoBom = new UTF8Encoding(encoderShouldEmitUTF8Identifier: false);
+
+        private Mutex? _mutex;
         private Thread? _pipeThread;
-        private bool    _ownsMutex;
+        private CancellationTokenSource? _pipeCts;
+        private bool _ownsMutex;
 
         public App()
         {
             Encoding.RegisterProvider(CodePagesEncodingProvider.Instance);
+        }
+
+        private static string GetPipeName()
+        {
+            using var proc = Process.GetCurrentProcess();
+            return $"AuroraPlayer_IPC_{proc.SessionId}";
         }
 
         protected override void OnStartup(StartupEventArgs e)
@@ -27,24 +39,33 @@ namespace AuroraPlayer
 
             if (!_ownsMutex)
             {
-                // Плеер уже запущен — передаём путь первому экземпляру и выходим
                 string arg = e.Args.Length > 0 ? e.Args[0] : "";
                 SendToRunningInstance(arg);
                 _mutex.Dispose();
-                Shutdown();
+                _mutex = null;
+                Shutdown(0);
                 return;
             }
 
-            // Мы первый экземпляр — запускаем pipe-сервер
-            StartPipeServer();
             base.OnStartup(e);
+            StartPipeServer();
         }
 
         protected override void OnExit(ExitEventArgs e)
         {
-            _pipeThread = null; // сигнал потоку на выход
-            if (_ownsMutex) try { _mutex?.ReleaseMutex(); } catch { }
+            try { _pipeCts?.Cancel(); } catch { }
+            try { _pipeThread?.Join(300); } catch { }
+            _pipeThread = null;
+            _pipeCts?.Dispose();
+            _pipeCts = null;
+
+            if (_ownsMutex)
+            {
+                try { _mutex?.ReleaseMutex(); } catch { }
+            }
             _mutex?.Dispose();
+            _mutex = null;
+
             base.OnExit(e);
         }
 
@@ -54,10 +75,13 @@ namespace AuroraPlayer
         {
             try
             {
-                using var client = new NamedPipeClientStream(".", PipeName,
-                    PipeDirection.Out, PipeOptions.None);
+                using var client = new NamedPipeClientStream(
+                    ".",
+                    GetPipeName(),
+                    PipeDirection.Out,
+                    PipeOptions.CurrentUserOnly);
                 client.Connect(timeout: 2000);
-                using var writer = new StreamWriter(client, Encoding.UTF8);
+                using var writer = new StreamWriter(client, Utf8NoBom);
                 writer.WriteLine(filePath);
                 writer.Flush();
             }
@@ -68,53 +92,89 @@ namespace AuroraPlayer
 
         private void StartPipeServer()
         {
-            _pipeThread = new Thread(PipeServerLoop)
+            _pipeCts = new CancellationTokenSource();
+            var token = _pipeCts.Token;
+
+            _pipeThread = new Thread(() => PipeServerLoop(token))
             {
                 IsBackground = true,
-                Name         = "AuroraPlayer.PipeServer"
+                Name = "AuroraPlayer.PipeServer"
             };
             _pipeThread.Start();
         }
 
-        private void PipeServerLoop()
+        private void PipeServerLoop(CancellationToken token)
         {
-            while (_pipeThread != null)
+            string pipeName = GetPipeName();
+
+            while (!token.IsCancellationRequested)
             {
                 try
                 {
-                    using var server = new NamedPipeServerStream(PipeName,
-                        PipeDirection.In, 1,
+                    using var server = new NamedPipeServerStream(
+                        pipeName,
+                        PipeDirection.In,
+                        1,
                         PipeTransmissionMode.Byte,
-                        PipeOptions.None);
+                        PipeOptions.Asynchronous | PipeOptions.CurrentUserOnly);
 
-                    server.WaitForConnection();
+                    server.WaitForConnectionAsync(token).GetAwaiter().GetResult();
 
-                    using var reader = new StreamReader(server, Encoding.UTF8);
+                    using var cancelReg = token.Register(() =>
+                    {
+                        try { server.Dispose(); } catch { }
+                    });
+
+                    using var reader = new StreamReader(server, Utf8NoBom);
                     string? path = reader.ReadLine();
 
-                    Dispatcher.Invoke(() => OnFileReceivedFromPipe(path ?? ""));
+                    if (path != null &&
+                        !token.IsCancellationRequested &&
+                        !Dispatcher.HasShutdownStarted &&
+                        !Dispatcher.HasShutdownFinished)
+                    {
+                        Dispatcher.BeginInvoke(new Action(() => OnFileReceivedFromPipe(path)));
+                    }
+                }
+                catch (OperationCanceledException)
+                {
+                    break;
                 }
                 catch
                 {
-                    Thread.Sleep(300);
+                    if (token.WaitHandle.WaitOne(300))
+                        break;
                 }
             }
         }
 
         // ─── Получен путь от второго экземпляра ──────────────────────────────────
 
-        private void OnFileReceivedFromPipe(string path)
+        private void OnFileReceivedFromPipe(string path, int retriesLeft = 10)
         {
-            if (MainWindow is not MainWindow player) return;
+            if (Dispatcher.HasShutdownStarted || Dispatcher.HasShutdownFinished)
+                return;
 
-            // Поднимаем окно на передний план
+            if (MainWindow is not MainWindow player || !player.IsLoaded)
+            {
+                if (retriesLeft > 0)
+                {
+                    Dispatcher.BeginInvoke(
+                        new Action(() => OnFileReceivedFromPipe(path, retriesLeft - 1)),
+                        DispatcherPriority.Loaded);
+                }
+                return;
+            }
+
             if (player.WindowState == WindowState.Minimized)
                 player.WindowState = WindowState.Normal;
             player.Activate();
             player.Focus();
 
-            if (!string.IsNullOrEmpty(path))
+            if (!string.IsNullOrWhiteSpace(path))
                 player.OpenFromCommandLine(path);
         }
     }
 }
+
+#nullable restore

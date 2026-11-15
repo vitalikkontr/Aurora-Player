@@ -111,7 +111,7 @@
                         <Border.Effect>
                             <DropShadowEffect x:Name="VersionShadow" Color="#7C6BFF" BlurRadius="4" ShadowDepth="0" Opacity="0.4"/>
                         </Border.Effect>
-                        <TextBlock Text="Версия 1.4.0.0" Foreground="#B0A8FF"
+                        <TextBlock Text="Версия 1.4.5.0" Foreground="#B0A8FF"
                                    FontFamily="Syne" FontSize="10" FontWeight="Bold"/>
                     </Border>
 

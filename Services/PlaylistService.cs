@@ -1,3 +1,5 @@
+#nullable enable
+
 using System;
 using System.Collections.Generic;
 using System.IO;
@@ -6,7 +8,7 @@ using System.Text;
 using System.Threading.Tasks;
 using System.Windows.Media.Imaging;
 using TagFile = TagLib.File;
-using IOPath  = System.IO.Path;
+using IOPath = System.IO.Path;
 
 namespace AuroraPlayer
 {
@@ -16,6 +18,16 @@ namespace AuroraPlayer
     /// </summary>
     public class PlaylistService
     {
+        static PlaylistService()
+        {
+            Encoding.RegisterProvider(CodePagesEncodingProvider.Instance);
+            Latin1Encoding = Encoding.GetEncoding("iso-8859-1");
+            Cp1251Encoding = Encoding.GetEncoding(1251);
+        }
+
+        private static readonly Encoding Latin1Encoding;
+        private static readonly Encoding Cp1251Encoding;
+
         // Поддерживаемые расширения
         public static readonly string[] SupportedExt =
             { ".mp3", ".flac", ".wav", ".aiff", ".aif", ".ogg", ".opus",
@@ -34,8 +46,9 @@ namespace AuroraPlayer
         /// <summary>Создаёт один TrackItem из пути к файлу, читая теги.</summary>
         public TrackItem BuildTrackItem(string path, int index)
         {
-            string title    = IOPath.GetFileNameWithoutExtension(path);
-            string artist   = "Неизвестен";
+            int safeIdx = Math.Max(0, index);
+            string title = IOPath.GetFileNameWithoutExtension(path);
+            string artist = "Неизвестен";
             string duration = "—";
             BitmapSource? cover = null;
 
@@ -47,74 +60,120 @@ namespace AuroraPlayer
                 using var tag = TagFile.Create(path);
                 if (!string.IsNullOrWhiteSpace(tag.Tag.Title))
                     title = FixEncoding(tag.Tag.Title);
-                if (tag.Tag.Performers?.Length > 0)
-                    artist = string.Join(", ", tag.Tag.Performers.Select(FixEncoding));
-                var ts = tag.Properties.Duration;
-                duration = $"{(int)ts.TotalMinutes}:{ts.Seconds:D2}";
 
-                cover = TryGetOrLoadCover(path, coverKey);
+                if (tag.Tag.Performers?.Length > 0)
+                {
+                    var performers = tag.Tag.Performers
+                        .Where(p => !string.IsNullOrWhiteSpace(p))
+                        .Select(FixEncoding)
+                        .ToArray();
+                    if (performers.Length > 0)
+                        artist = string.Join(", ", performers);
+                }
+
+                var ts = tag.Properties.Duration;
+                if (ts > TimeSpan.Zero)
+                    duration = FormatTime(ts);
+
+                cover = TryGetOrLoadCoverFromTag(tag, coverKey);
             }
             catch { }
 
             var item = new TrackItem
             {
-                Path           = path,
-                Title          = title,
-                Artist         = artist,
-                Duration       = duration,
-                Format         = IOPath.GetExtension(path).TrimStart('.').ToUpperInvariant(),
-                Index          = index + 1,
-                Color1         = Grad1[index % Grad1.Length],
-                Color2         = Grad2[index % Grad2.Length],
-                CoverCacheKey  = coverKey,
+                Path = path,
+                Title = title,
+                Artist = artist,
+                Duration = duration,
+                Format = IOPath.GetExtension(path).TrimStart('.').ToUpperInvariant(),
+                Index = safeIdx + 1,
+                Color1 = Grad1[safeIdx % Grad1.Length],
+                Color2 = Grad2[safeIdx % Grad2.Length],
+                CoverCacheKey = coverKey,
             };
-            // Записываем в кэш через свойство (или напрямую если кэша нет)
-            if (cover != null) item.CoverImage = cover;
+
+            if (cover != null)
+                item.CoverImage = cover;
+
             return item;
         }
 
         /// <summary>Строит список TrackItem из CUE-файла.</summary>
         public List<TrackItem> BuildCueItems(string cuePath, int startIndex)
         {
-            var result    = new List<TrackItem>();
-            var cueTracks = CueParser.Parse(cuePath);
-            int idx       = startIndex;
+            var result = new List<TrackItem>();
+            if (string.IsNullOrWhiteSpace(cuePath) || !File.Exists(cuePath))
+                return result;
 
-            // Общая обложка для всего CUE-альбома — берём из первого аудиофайла
-            string? sharedCoverKey = null;
+            var cueTracks = CueParser.Parse(cuePath);
+            if (cueTracks == null || cueTracks.Count == 0)
+                return result;
+
+            int idx = Math.Max(0, startIndex);
+
             string? firstAudioWithFile = cueTracks
                 .Select(ct => ct.AudioFile)
-                .FirstOrDefault(File.Exists);
-            if (!string.IsNullOrEmpty(firstAudioWithFile))
-                sharedCoverKey = IOPath.GetDirectoryName(firstAudioWithFile) ?? firstAudioWithFile;
+                .FirstOrDefault(f => !string.IsNullOrEmpty(f) && File.Exists(f));
+
+            string? sharedCoverKey = !string.IsNullOrEmpty(firstAudioWithFile)
+                ? (IOPath.GetDirectoryName(firstAudioWithFile) ?? firstAudioWithFile)
+                : null;
 
             BitmapSource? sharedCover = null;
-            if (sharedCoverKey != null && firstAudioWithFile != null)
-                sharedCover = TryGetOrLoadCover(firstAudioWithFile, sharedCoverKey);
+            TimeSpan totalAudioDur = TimeSpan.Zero;
+
+            bool needCover = sharedCoverKey != null && !TrackItem.CoverCache.ContainsKey(sharedCoverKey);
+            bool needTotalDuration = cueTracks.Any(ct => ct.End <= ct.Start);
+
+            if (!string.IsNullOrEmpty(firstAudioWithFile) && (needCover || needTotalDuration))
+            {
+                try
+                {
+                    using var tag = TagFile.Create(firstAudioWithFile);
+                    totalAudioDur = tag.Properties.Duration;
+                    if (sharedCoverKey != null)
+                        sharedCover = TryGetOrLoadCoverFromTag(tag, sharedCoverKey);
+                }
+                catch { }
+            }
+            else if (sharedCoverKey != null)
+            {
+                TrackItem.CoverCache.TryGetValue(sharedCoverKey, out sharedCover);
+            }
 
             foreach (var ct in cueTracks)
             {
-                if (!File.Exists(ct.AudioFile)) continue;
-                string dur = ct.End > ct.Start ? FormatTime(ct.End - ct.Start) : "—";
+                if (string.IsNullOrWhiteSpace(ct.AudioFile) || !File.Exists(ct.AudioFile))
+                    continue;
+
+                TimeSpan durTs = ct.End > ct.Start
+                    ? ct.End - ct.Start
+                    : (totalAudioDur > ct.Start ? totalAudioDur - ct.Start : TimeSpan.Zero);
+                string dur = durTs > TimeSpan.Zero ? FormatTime(durTs) : "—";
+
                 var item = new TrackItem
                 {
-                    Path          = ct.AudioFile,
-                    Title         = string.IsNullOrEmpty(ct.Title) ? $"Track {ct.Number}" : ct.Title,
-                    Artist        = ct.Performer,
-                    Duration      = dur,
-                    Format        = IOPath.GetExtension(ct.AudioFile).TrimStart('.').ToUpperInvariant() + " CUE",
-                    Index         = idx + 1,
-                    Color1        = Grad1[idx % Grad1.Length],
-                    Color2        = Grad2[idx % Grad2.Length],
-                    IsCue         = true,
-                    CueStart      = ct.Start,
-                    CueEnd        = ct.End,
+                    Path = ct.AudioFile,
+                    Title = string.IsNullOrWhiteSpace(ct.Title) ? $"Track {ct.Number}" : FixEncoding(ct.Title),
+                    Artist = string.IsNullOrWhiteSpace(ct.Performer) ? "Неизвестен" : FixEncoding(ct.Performer),
+                    Duration = dur,
+                    Format = IOPath.GetExtension(ct.AudioFile).TrimStart('.').ToUpperInvariant() + " CUE",
+                    Index = idx + 1,
+                    Color1 = Grad1[idx % Grad1.Length],
+                    Color2 = Grad2[idx % Grad2.Length],
+                    IsCue = true,
+                    CueStart = ct.Start,
+                    CueEnd = ct.End,
                     CoverCacheKey = sharedCoverKey,
                 };
-                if (sharedCover != null) item.CoverImage = sharedCover;
+
+                if (sharedCover != null)
+                    item.CoverImage = sharedCover;
+
                 result.Add(item);
                 idx++;
             }
+
             return result;
         }
 
@@ -122,48 +181,56 @@ namespace AuroraPlayer
         /// Асинхронно сканирует папку, возвращает все треки (CUE имеют приоритет).
         /// </summary>
         public async Task<(List<TrackItem> Tracks, HashSet<string> CoveredFiles)> ScanFolderAsync(
-            string folderPath, HashSet<string> existingPaths, int startIndex)
+            string folderPath, HashSet<string>? existingPaths, int startIndex)
         {
-            var tracks       = new List<TrackItem>();
+            var tracks = new List<TrackItem>();
             var coveredFiles = new HashSet<string>(StringComparer.OrdinalIgnoreCase);
 
-            // CUE-файлы имеют приоритет
-            string[] cueFiles = await Task.Run(() =>
-                Directory.GetFiles(folderPath, "*.cue", SearchOption.AllDirectories)
-                    .OrderBy(f => f).ToArray());
+            if (string.IsNullOrWhiteSpace(folderPath) || !Directory.Exists(folderPath))
+                return (tracks, coveredFiles);
 
-            foreach (var cf in cueFiles)
+            existingPaths ??= new HashSet<string>(StringComparer.OrdinalIgnoreCase);
+            int safeStart = Math.Max(0, startIndex);
+
+            var enumOpts = new EnumerationOptions
             {
-                try
-                {
-                    var items = BuildCueItems(cf, startIndex + tracks.Count);
-                    foreach (var item in items)
-                    {
-                        coveredFiles.Add(item.Path);
-                        tracks.Add(item);
-                    }
-                }
-                catch { }
-            }
+                RecurseSubdirectories = true,
+                IgnoreInaccessible = true
+            };
 
-            // Обычные аудио-файлы, не покрытые CUE
-            string[] files = await Task.Run(() =>
-                Directory.GetFiles(folderPath, "*.*", SearchOption.AllDirectories)
+            return await Task.Run(() =>
+            {
+                var cueFiles = Directory.EnumerateFiles(folderPath, "*.cue", enumOpts)
+                    .OrderBy(f => f, StringComparer.OrdinalIgnoreCase)
+                    .ToArray();
+
+                foreach (var cf in cueFiles)
+                {
+                    try
+                    {
+                        var items = BuildCueItems(cf, safeStart + tracks.Count);
+                        foreach (var item in items)
+                        {
+                            coveredFiles.Add(item.Path);
+                            if (!existingPaths.Contains(item.Path))
+                                tracks.Add(item);
+                        }
+                    }
+                    catch { }
+                }
+
+                var files = Directory.EnumerateFiles(folderPath, "*.*", enumOpts)
                     .Where(f => SupportedExtSet.Contains(IOPath.GetExtension(f))
                              && !coveredFiles.Contains(f)
                              && !existingPaths.Contains(f))
-                    .OrderBy(f => f).ToArray());
+                    .OrderBy(f => f, StringComparer.OrdinalIgnoreCase)
+                    .ToArray();
 
-            var batch = await Task.Run(() =>
-            {
-                var items = new List<TrackItem>();
                 foreach (var f in files)
-                    items.Add(BuildTrackItem(f, startIndex + tracks.Count + items.Count));
-                return items;
-            });
+                    tracks.Add(BuildTrackItem(f, safeStart + tracks.Count));
 
-            tracks.AddRange(batch);
-            return (tracks, coveredFiles);
+                return (tracks, coveredFiles);
+            });
         }
 
         // ─── Вспомогательные ─────────────────────────────────────────────────────
@@ -172,44 +239,59 @@ namespace AuroraPlayer
         public static string FixEncoding(string input)
         {
             if (string.IsNullOrEmpty(input)) return input;
+
+            // Быстрая проверка: если все символы ASCII или уже есть символы > 0xFF (например, UTF-8 кириллица) — не перекодируем
+            bool hasHighLatin1 = false;
+            for (int i = 0; i < input.Length; i++)
+            {
+                char c = input[i];
+                if (c > 0xFF) return input;
+                if (c >= 0x80) hasHighLatin1 = true;
+            }
+            if (!hasHighLatin1) return input;
+
             try
             {
-                var latin1  = Encoding.GetEncoding("iso-8859-1");
-                var cp1251  = Encoding.GetEncoding(1251);
-                var bytes   = latin1.GetBytes(input);
-                if (bytes.All(b => b < 0x80)) return input;
-                var decoded = cp1251.GetString(bytes);
-                bool hasCyrillic = decoded.Any(c => (c >= 'А' && c <= 'я') || c == 'ё' || c == 'Ё');
-                if (hasCyrillic) return decoded;
+                byte[] bytes = Latin1Encoding.GetBytes(input);
+                string decoded = Cp1251Encoding.GetString(bytes);
+                for (int i = 0; i < decoded.Length; i++)
+                {
+                    char c = decoded[i];
+                    if ((c >= 'А' && c <= 'я') || c == 'ё' || c == 'Ё')
+                        return decoded;
+                }
             }
             catch { }
+
             return input;
         }
 
         public static string FormatTime(TimeSpan ts)
-            => $"{(int)ts.TotalMinutes}:{ts.Seconds:D2}";
+        {
+            if (ts < TimeSpan.Zero) ts = TimeSpan.Zero;
+            return $"{(int)ts.TotalMinutes}:{ts.Seconds:D2}";
+        }
 
-        private static BitmapSource? TryGetOrLoadCover(string audioPath, string coverKey)
+        private static BitmapSource? TryGetOrLoadCoverFromTag(TagFile tag, string coverKey)
         {
             if (TrackItem.CoverCache.TryGetValue(coverKey, out var cached))
                 return cached;
 
             try
             {
-                using var tag = TagFile.Create(audioPath);
                 var pic = tag.Tag.Pictures?.FirstOrDefault();
-                if (pic?.Data?.Data == null || pic.Data.Data.Length == 0) return null;
+                if (pic?.Data?.Data is not { Length: > 0 } bytes)
+                    return null;
 
-                using var ms = new MemoryStream(pic.Data.Data);
+                using var ms = new MemoryStream(bytes);
                 var bmp = new BitmapImage();
                 bmp.BeginInit();
-                bmp.CacheOption      = BitmapCacheOption.OnLoad;
-                bmp.StreamSource     = ms;
+                bmp.CacheOption = BitmapCacheOption.OnLoad;
+                bmp.StreamSource = ms;
                 bmp.DecodePixelWidth = 68; // достаточно для 34px @2x
                 bmp.EndInit();
                 bmp.Freeze();
 
-                TrackItem.CoverCache[coverKey] = bmp;
                 return bmp;
             }
             catch
@@ -219,3 +301,5 @@ namespace AuroraPlayer
         }
     }
 }
+
+#nullable restore

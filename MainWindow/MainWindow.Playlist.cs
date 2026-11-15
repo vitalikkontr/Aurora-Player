@@ -1,9 +1,13 @@
 // MainWindow.Playlist.cs — управление плейлистом, файлы, drag-and-drop
+#nullable enable
+
 using Microsoft.Win32;
 using System;
 using System.Collections.Generic;
+using System.Diagnostics;
 using System.IO;
 using System.Linq;
+using System.Threading;
 using System.Threading.Tasks;
 using System.Windows;
 using System.Windows.Controls;
@@ -15,16 +19,15 @@ namespace AuroraPlayer
 {
     public partial class MainWindow
     {
+        private int _folderLoadGeneration;
+
         // ─── Открытие файлов ──────────────────────────────────────────────────────
 
         private void OpenFolder_Click(object s, RoutedEventArgs e)
         {
             var dlg = new OpenFolderDialog { Title = "Выберите папку с музыкой" };
             if (dlg.ShowDialog() == true)
-            {
-                _isLoadingFolder = false;
                 _ = AddFolderAsync(dlg.FolderName, clearFirst: true);
-            }
         }
 
         private void OpenFiles_Click(object s, RoutedEventArgs e)
@@ -39,9 +42,16 @@ namespace AuroraPlayer
             };
             if (dlg.ShowDialog() != true) return;
 
-            StopEngine(); DisposeCachedReader(); SetPlaying(false);
-            _lastFolder = null; // файлы открыты по одному — папка не актуальна, восстановление через SavedPaths
-            Playlist.Clear(); _currentIndex = -1;
+            Interlocked.Increment(ref _folderLoadGeneration);
+            _isLoadingFolder = false;
+
+            StopEngine();
+            DisposeCachedReader();
+            SetPlaying(false);
+            _lastFolder = null; // файлы открыты по одному — восстановление через SavedPaths
+            Playlist.Clear();
+            _currentIndex = -1;
+            InvalidateAlbumArt(clearSources: true);
             UpdatePlaylistHeader();
 
             foreach (var f in dlg.FileNames)
@@ -58,12 +68,12 @@ namespace AuroraPlayer
 
         private void AddTrack(string path)
         {
-            if (!File.Exists(path)) return;
+            if (string.IsNullOrWhiteSpace(path) || !File.Exists(path)) return;
             string ext = IOPath.GetExtension(path);
             if (!PlaylistService.SupportedExtSet.Contains(ext)) return;
             if (Playlist.Any(t => t.Path.Equals(path, StringComparison.OrdinalIgnoreCase))) return;
 
-            int idx  = Playlist.Count;
+            int idx = Playlist.Count;
             var item = new PlaylistService().BuildTrackItem(path, idx);
             Playlist.Add(item);
             UpdatePlaylistHeader();
@@ -71,28 +81,51 @@ namespace AuroraPlayer
 
         private void AddCueFile(string cuePath)
         {
+            if (string.IsNullOrWhiteSpace(cuePath) || !File.Exists(cuePath)) return;
             try
             {
-                int idx   = Playlist.Count;
+                int idx = Playlist.Count;
                 var items = new PlaylistService().BuildCueItems(cuePath, idx);
-                foreach (var item in items) Playlist.Add(item);
+                if (items == null) return;
+
+                foreach (var item in items)
+                {
+                    bool exists = Playlist.Any(t =>
+                        t.Path.Equals(item.Path, StringComparison.OrdinalIgnoreCase) &&
+                        t.CueStart == item.CueStart &&
+                        t.CueEnd == item.CueEnd);
+                    if (!exists)
+                        Playlist.Add(item);
+                }
                 UpdatePlaylistHeader();
             }
-            catch { }
+            catch (Exception ex)
+            {
+                Debug.WriteLine($"AddCueFile error: {ex}");
+            }
         }
 
         private async Task AddFolderAsync(string path, bool clearFirst = false,
             int initialIndex = -1, double initialSeek = 0)
         {
-            if (_isLoadingFolder) return;
+            if (string.IsNullOrWhiteSpace(path) || !Directory.Exists(path))
+                return;
+
+            int loadGen = clearFirst
+                ? Interlocked.Increment(ref _folderLoadGeneration)
+                : Volatile.Read(ref _folderLoadGeneration);
+
             _isLoadingFolder = true;
-            _lastFolder      = path;
+            _lastFolder = path;
             try
             {
                 if (clearFirst)
                 {
-                    StopEngine(); DisposeCachedReader(); SetPlaying(false);
-                    Playlist.Clear(); _currentIndex = -1;
+                    StopEngine();
+                    DisposeCachedReader();
+                    SetPlaying(false);
+                    Playlist.Clear();
+                    _currentIndex = -1;
                     InvalidateAlbumArt(clearSources: true);
                     UpdatePlaylistHeader();
                 }
@@ -103,38 +136,75 @@ namespace AuroraPlayer
                 var (tracks, _) = await new PlaylistService()
                     .ScanFolderAsync(path, existing, Playlist.Count);
 
-                foreach (var item in tracks) Playlist.Add(item);
+                // Если во время сканирования открыли другую папку/файлы или закрыли окно — выходим
+                if (_isClosingHandled || loadGen != Volatile.Read(ref _folderLoadGeneration))
+                    return;
+
+                if (tracks != null)
+                {
+                    foreach (var item in tracks)
+                    {
+                        if (!Playlist.Any(t => t.Path.Equals(item.Path, StringComparison.OrdinalIgnoreCase) &&
+                                               t.CueStart == item.CueStart && t.CueEnd == item.CueEnd))
+                        {
+                            Playlist.Add(item);
+                        }
+                    }
+                }
                 UpdatePlaylistHeader();
 
                 if (_currentIndex < 0 && Playlist.Count > 0)
                 {
                     int idx = initialIndex >= 0 && initialIndex < Playlist.Count ? initialIndex : 0;
-                    // Если restore уже выполнялся в этой сессии — не затираем позицию.
-                    // Но при явной смене папки (clearFirst=true) обязательно грузим первый трек.
-                    if (!clearFirst && _sessionRestoreDone && initialSeek == 0 && initialIndex < 0) return;
-                    if (initialSeek > 0 || initialIndex >= 0) _sessionRestoreDone = true;
+                    if (!clearFirst && _sessionRestoreDone && initialSeek == 0 && initialIndex < 0)
+                        return;
+                    if (initialSeek > 0 || initialIndex >= 0)
+                        _sessionRestoreDone = true;
+
                     LoadTrack(idx, autoPlay: false, seekSeconds: initialSeek);
                 }
             }
-            finally { _isLoadingFolder = false; }
+            catch (Exception ex)
+            {
+                Debug.WriteLine($"AddFolderAsync error: {ex}");
+            }
+            finally
+            {
+                if (loadGen == Volatile.Read(ref _folderLoadGeneration))
+                    _isLoadingFolder = false;
+            }
         }
 
         // ─── Drag & Drop ──────────────────────────────────────────────────────────
 
-        private void Window_Drop(object s, DragEventArgs e)
+        private async void Window_Drop(object s, DragEventArgs e)
         {
             if (!e.Data.GetDataPresent(DataFormats.FileDrop)) return;
-            var items = (string[])e.Data.GetData(DataFormats.FileDrop);
-            foreach (var item in items)
+            if (e.Data.GetData(DataFormats.FileDrop) is not string[] items || items.Length == 0)
+                return;
+
+            try
             {
-                if (Directory.Exists(item))
-                    _ = AddFolderAsync(item);
-                else if (IOPath.GetExtension(item).Equals(".cue", StringComparison.OrdinalIgnoreCase))
-                    AddCueFile(item);
-                else
-                    AddTrack(item);
+                foreach (var item in items)
+                {
+                    if (_isClosingHandled) return;
+                    if (string.IsNullOrWhiteSpace(item)) continue;
+
+                    if (Directory.Exists(item))
+                        await AddFolderAsync(item);
+                    else if (IOPath.GetExtension(item).Equals(".cue", StringComparison.OrdinalIgnoreCase))
+                        AddCueFile(item);
+                    else
+                        AddTrack(item);
+                }
+
+                if (!_isClosingHandled && _currentIndex < 0 && Playlist.Count > 0)
+                    LoadTrack(0, autoPlay: false);
             }
-            if (_currentIndex < 0 && Playlist.Count > 0) LoadTrack(0, autoPlay: false);
+            catch (Exception ex)
+            {
+                Debug.WriteLine($"Window_Drop error: {ex}");
+            }
         }
 
         // ─── Список треков (UI events) ────────────────────────────────────────────
@@ -142,26 +212,33 @@ namespace AuroraPlayer
         private void TrackList_SelectionChanged(object s, SelectionChangedEventArgs e)
         {
             if (_isProgrammaticSelection || _isTransitioning || _selectionChangedSuppressed) return;
-            if (TrackList.SelectedIndex >= 0 && TrackList.SelectedIndex != _currentIndex)
+            if (TrackList.SelectedIndex >= 0 &&
+                TrackList.SelectedIndex < Playlist.Count &&
+                TrackList.SelectedIndex != _currentIndex)
+            {
                 LoadTrack(TrackList.SelectedIndex, autoPlay: true);
+            }
         }
 
-        // PreviewMouseLeftButtonDown нужен потому что дочерние элементы DataTemplate
-        // поглощают MouseLeftButtonDown и ListBox не получает клик → SelectionChanged не срабатывает.
         private void TrackList_PreviewMouseLeftButtonDown(object s, MouseButtonEventArgs e)
         {
             if (_isProgrammaticSelection || _isTransitioning) return;
+
             var hit = e.OriginalSource as DependencyObject;
             while (hit != null && hit is not ListBoxItem)
-                hit = VisualTreeHelper.GetParent(hit);
+            {
+                hit = hit is Visual
+                    ? VisualTreeHelper.GetParent(hit)
+                    : LogicalTreeHelper.GetParent(hit);
+            }
             if (hit is not ListBoxItem item) return;
-            int idx = TrackList.ItemContainerGenerator.IndexFromContainer(item);
-            if (idx < 0) return;
 
-            // Одиночный щелчок по текущему (выбранному) треку должен начать воспроизведение.
+            int idx = TrackList.ItemContainerGenerator.IndexFromContainer(item);
+            if (idx < 0 || idx >= Playlist.Count) return;
+
             if (idx == _currentIndex)
             {
-                if (!_isPlaying) PlayPause_Click(this, null!);
+                if (!_isPlaying) PlayPause_Click(this, e);
                 e.Handled = true;
                 return;
             }
@@ -174,28 +251,45 @@ namespace AuroraPlayer
             }
             finally
             {
-                // SelectionChanged может появиться после этого обработчика; подавление выпуска
-                // при следующем обращении диспетчера, чтобы избежать дублирования вызовов LoadTrack.
                 Dispatcher.BeginInvoke(new Action(() => _selectionChangedSuppressed = false));
             }
         }
 
         private void TrackList_DoubleClick(object s, MouseButtonEventArgs e)
         {
-            if (TrackList.SelectedIndex >= 0)
+            if (TrackList.SelectedIndex >= 0 && TrackList.SelectedIndex < Playlist.Count)
                 LoadTrack(TrackList.SelectedIndex, autoPlay: true);
         }
 
         private void ClearPlaylist_Click(object s, RoutedEventArgs e)
         {
-            _timer.Stop(); _vizTimer.Stop(); _eqTimer.Stop();
-            StopEngine(); DisposeCachedReader(); SetPlaying(false);
-            Playlist.Clear(); _currentIndex = -1;
-            SongTitle.Text   = "Выберите музыку";
-            SongArtist.Text  = "Добавьте папку или файл";
-            FormatBadge.Text = "-"; TagBitrate.Text = "-"; TagGenre.Text = "-";
-            CurrentTime.Text = "0:00"; TotalTime.Text = "0:00";
-            ProgressSlider.Value = 0; ProgressSlider.IsEnabled = false;
+            Interlocked.Increment(ref _folderLoadGeneration);
+            _isLoadingFolder = false;
+            _lastFolder = null;
+
+            _timer.Stop();
+            _vizTimer.Stop();
+            _eqTimer.Stop();
+            StopEngine();
+            DisposeCachedReader();
+            SetPlaying(false);
+
+            Playlist.Clear();
+            _currentIndex = -1;
+
+            SongTitle.Text = "Выберите музыку";
+            SongArtist.Text = "Добавьте папку или файл";
+            MiniTitle.Text = "Aurora Player";
+            MiniArtist.Text = "";
+            FormatBadge.Text = "-";
+            TagBitrate.Text = "-";
+            TagGenre.Text = "-";
+            CurrentTime.Text = "0:00";
+            TotalTime.Text = "0:00";
+            ProgressSlider.Maximum = 0;
+            ProgressSlider.Value = 0;
+            ProgressSlider.IsEnabled = false;
+
             InvalidateAlbumArt(clearSources: true);
             UpdatePlaylistHeader();
         }
@@ -215,41 +309,76 @@ namespace AuroraPlayer
 
         // ─── Resize полоса плейлиста ──────────────────────────────────────────────
 
-        private bool   _isResizingPlaylist;
+        private bool _isResizingPlaylist;
         private double _resizeStartY;
         private double _resizeStartWindowHeight;
         private double _resizeContentHeight;
 
         private void PlaylistResize_MouseDown(object s, MouseButtonEventArgs e)
         {
-            if (e.ChangedButton != MouseButton.Left) return;
-            _isResizingPlaylist      = true;
-            _resizeStartY            = PointToScreen(e.GetPosition(this)).Y;
+            if (e.ChangedButton != MouseButton.Left || _isMini) return;
+            if (PresentationSource.FromVisual(this) == null) return;
+
+            _isResizingPlaylist = true;
+            _resizeStartY = PointToScreen(e.GetPosition(this)).Y;
             _resizeStartWindowHeight = ActualHeight;
-            _resizeContentHeight     = ActualHeight - (TrackList.ActualHeight > 0 ? TrackList.ActualHeight : 0);
+            double trackH = TrackList != null && TrackList.ActualHeight > 0 ? TrackList.ActualHeight : 0;
+            _resizeContentHeight = ActualHeight - trackH;
             MinHeight = 0;
-            this.CaptureMouse();
+
+            LostMouseCapture -= PlaylistResize_LostMouseCapture;
+            LostMouseCapture += PlaylistResize_LostMouseCapture;
+            CaptureMouse();
             e.Handled = true;
         }
 
-        private void PlaylistResize_MouseMove(object s, System.Windows.Input.MouseEventArgs e)
+        private void PlaylistResize_MouseMove(object s, MouseEventArgs e)
         {
             if (!_isResizingPlaylist) return;
-            double delta = PointToScreen(e.GetPosition(this)).Y - _resizeStartY;
-            double newH  = _resizeStartWindowHeight + delta;
-            double minH  = _resizeContentHeight > 0 ? _resizeContentHeight : 420;
-            Height = Math.Max(newH, minH);
+            if (e.LeftButton != MouseButtonState.Pressed)
+            {
+                FinishPlaylistResize();
+                return;
+            }
+
+            if (PresentationSource.FromVisual(this) is not PresentationSource src ||
+                src.CompositionTarget == null)
+                return;
+
+            double dpiY = src.CompositionTarget.TransformToDevice.M22;
+            if (dpiY <= 0) dpiY = 1.0;
+
+            double deltaDip = (PointToScreen(e.GetPosition(this)).Y - _resizeStartY) / dpiY;
+            double newH = _resizeStartWindowHeight + deltaDip;
+            double minH = _resizeContentHeight > 0 ? _resizeContentHeight : 420;
+
+            var wa = GetCurrentMonitorWorkAreaDip();
+            double maxH = Math.Max(minH, wa.Bottom - Top);
+
+            Height = Math.Clamp(newH, minH, maxH);
         }
 
         private void PlaylistResize_MouseUp(object s, MouseButtonEventArgs e)
         {
+            FinishPlaylistResize();
+        }
+
+        private void PlaylistResize_LostMouseCapture(object sender, MouseEventArgs e)
+        {
+            FinishPlaylistResize();
+        }
+
+        private void FinishPlaylistResize()
+        {
             if (!_isResizingPlaylist) return;
             _isResizingPlaylist = false;
-            this.ReleaseMouseCapture();
+            LostMouseCapture -= PlaylistResize_LostMouseCapture;
+            if (IsMouseCaptured)
+                ReleaseMouseCapture();
             MinHeight = 0;
         }
 
-        protected override void OnMouseMove(System.Windows.Input.MouseEventArgs e)
+        protected override void OnMouseMove(MouseEventArgs e)
         {
             base.OnMouseMove(e);
             if (_isResizingPlaylist) PlaylistResize_MouseMove(this, e);
@@ -262,3 +391,5 @@ namespace AuroraPlayer
         }
     }
 }
+
+#nullable restore

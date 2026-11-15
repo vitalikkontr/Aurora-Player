@@ -1,5 +1,5 @@
 #define MyAppName      "Aurora Player"
-#define MyAppVersion   "1.4.0.0"
+#define MyAppVersion   "1.4.5.0"
 #define MyAppPublisher "Виталий Николаевич (vitalikkontr)"
 #define MyAppExeName   "AuroraPlayer.exe"
 #define MyAppURL       "https://github.com/vitalikkontr"
@@ -13,7 +13,7 @@ AppPublisher={#MyAppPublisher}
 AppPublisherURL={#MyAppURL}
 AppSupportURL={#MyAppURL}
 AppUpdatesURL={#MyAppURL}
-AppCopyright=© 2026 Виталий Николаевич (vitalikkontr)
+AppCopyright=© 2027 Виталий Николаевич (vitalikkontr)
 
 ; Путь к лицензии
 LicenseFile=Assets\LICENSE.rtf

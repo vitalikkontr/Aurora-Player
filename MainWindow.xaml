@@ -33,6 +33,14 @@
         <Color           x:Key="Accent2Color">#FF6BB5</Color>
         <Color           x:Key="CyanColor"   >#00E5CC</Color>
 
+        <!-- Градиент заливки слайдера прогресса.
+             ВАЖНО: если SliderGradient создаётся из code-behind (Resources.Add),
+             удалите этот блок или замените Add на Resources["SliderGradient"] = ... -->
+        <LinearGradientBrush x:Key="SliderGradient" StartPoint="0,0" EndPoint="1,0">
+            <GradientStop Color="#7C6BFF" Offset="0"/>
+            <GradientStop Color="#FF6BB5" Offset="1"/>
+        </LinearGradientBrush>
+
         <!-- ══ НЕОН ПУЛЬС ══ -->
         <Storyboard x:Key="NeonPulseViolet" RepeatBehavior="Forever" Timeline.DesiredFrameRate="20">
             <DoubleAnimation Storyboard.TargetProperty="(UIElement.Effect).(DropShadowEffect.BlurRadius)"
@@ -61,7 +69,7 @@
                              From="#FF6BB5" To="#7C6BFF" Duration="0:0:4.0" AutoReverse="True"/>
         </Storyboard>
 
-                <!-- Scrollbar Style -->
+        <!-- Scrollbar Style -->
         <Style x:Key="ThinScrollBar" TargetType="ScrollBar">
             <Setter Property="Width" Value="4"/>
             <Setter Property="Background" Value="Transparent"/>
@@ -180,36 +188,32 @@
             </Setter>
         </Style>
 
-        <!-- Mini Play Button — pill-sized gradient circle with glow -->
+        <!-- Mini Play Button (мини-плеер) -->
         <Style x:Key="MiniPlayButton" TargetType="Button">
-            <Setter Property="Width" Value="34"/>
-            <Setter Property="Height" Value="34"/>
+            <Setter Property="Width" Value="28"/>
+            <Setter Property="Height" Value="28"/>
+            <Setter Property="Margin" Value="2,0"/>
             <Setter Property="Cursor" Value="Hand"/>
             <Setter Property="BorderThickness" Value="0"/>
             <Setter Property="Template">
                 <Setter.Value>
                     <ControlTemplate TargetType="Button">
-                        <Border x:Name="bd" CornerRadius="17">
+                        <Border x:Name="bd" CornerRadius="14" RenderTransformOrigin="0.5,0.5">
                             <Border.Background>
                                 <LinearGradientBrush StartPoint="0,0" EndPoint="1,1">
                                     <GradientStop Color="{DynamicResource Accent1Color}" Offset="0"/>
                                     <GradientStop Color="{DynamicResource Accent2Color}" Offset="1"/>
                                 </LinearGradientBrush>
                             </Border.Background>
-                            <Border.Effect>
-                                <DropShadowEffect Color="{DynamicResource Accent1Color}" BlurRadius="5" ShadowDepth="0" Opacity="0.55"/>
-                            </Border.Effect>
                             <ContentPresenter HorizontalAlignment="Center" VerticalAlignment="Center"/>
                         </Border>
                         <ControlTemplate.Triggers>
                             <Trigger Property="IsMouseOver" Value="True">
-                                <Setter TargetName="bd" Property="RenderTransform">
-                                    <Setter.Value><ScaleTransform ScaleX="1.07" ScaleY="1.07"/></Setter.Value>
-                                </Setter>
+                                <Setter TargetName="bd" Property="Opacity" Value="0.9"/>
                             </Trigger>
                             <Trigger Property="IsPressed" Value="True">
                                 <Setter TargetName="bd" Property="RenderTransform">
-                                    <Setter.Value><ScaleTransform ScaleX="0.93" ScaleY="0.93"/></Setter.Value>
+                                    <Setter.Value><ScaleTransform ScaleX="0.92" ScaleY="0.92"/></Setter.Value>
                                 </Setter>
                             </Trigger>
                         </ControlTemplate.Triggers>
@@ -223,19 +227,34 @@
             <Setter Property="Template">
                 <Setter.Value>
                     <ControlTemplate TargetType="Slider">
-                        <Grid Height="14" VerticalAlignment="Center">
+                        <Grid Height="14" VerticalAlignment="Center" Background="Transparent">
                             <Border Height="3" CornerRadius="2" Background="#18FFFFFF" VerticalAlignment="Center"/>
-                            <Border x:Name="PART_SelectionRange" Height="3" CornerRadius="2" HorizontalAlignment="Left" VerticalAlignment="Center">
-                                <Border.Background>
-                                    <DynamicResource ResourceKey="SliderGradient"/>
-                                </Border.Background>
-                            </Border>
                             <Track x:Name="PART_Track">
+                                <Track.DecreaseRepeatButton>
+                                    <RepeatButton Command="Slider.DecreaseLarge" Focusable="False" IsTabStop="False">
+                                        <RepeatButton.Template>
+                                            <ControlTemplate TargetType="RepeatButton">
+                                                <Border Height="3" CornerRadius="2"
+                                                        Background="{DynamicResource SliderGradient}"
+                                                        VerticalAlignment="Center"/>
+                                            </ControlTemplate>
+                                        </RepeatButton.Template>
+                                    </RepeatButton>
+                                </Track.DecreaseRepeatButton>
+                                <Track.IncreaseRepeatButton>
+                                    <RepeatButton Command="Slider.IncreaseLarge" Focusable="False" IsTabStop="False">
+                                        <RepeatButton.Template>
+                                            <ControlTemplate TargetType="RepeatButton">
+                                                <Border Background="Transparent" Height="14"/>
+                                            </ControlTemplate>
+                                        </RepeatButton.Template>
+                                    </RepeatButton>
+                                </Track.IncreaseRepeatButton>
                                 <Track.Thumb>
-                                    <Thumb>
+                                    <Thumb Focusable="False">
                                         <Thumb.Template>
                                             <ControlTemplate TargetType="Thumb">
-                                                <Ellipse x:Name="th" Width="12" Height="12" Fill="White">
+                                                <Ellipse Width="12" Height="12" Fill="White">
                                                     <Ellipse.Effect>
                                                         <DropShadowEffect Color="{DynamicResource Accent1Color}" BlurRadius="4" ShadowDepth="0" Opacity="0.8"/>
                                                     </Ellipse.Effect>
@@ -256,11 +275,31 @@
             <Setter Property="Template">
                 <Setter.Value>
                     <ControlTemplate TargetType="Slider">
-                        <Grid Height="14" VerticalAlignment="Center">
+                        <Grid Height="14" VerticalAlignment="Center" Background="Transparent">
                             <Border Height="3" CornerRadius="2" Background="#18FFFFFF" VerticalAlignment="Center"/>
                             <Track x:Name="PART_Track">
+                                <Track.DecreaseRepeatButton>
+                                    <RepeatButton Command="Slider.DecreaseLarge" Focusable="False" IsTabStop="False">
+                                        <RepeatButton.Template>
+                                            <ControlTemplate TargetType="RepeatButton">
+                                                <Border Height="3" CornerRadius="2"
+                                                        Background="{DynamicResource CyanBrush}"
+                                                        Opacity="0.5" VerticalAlignment="Center"/>
+                                            </ControlTemplate>
+                                        </RepeatButton.Template>
+                                    </RepeatButton>
+                                </Track.DecreaseRepeatButton>
+                                <Track.IncreaseRepeatButton>
+                                    <RepeatButton Command="Slider.IncreaseLarge" Focusable="False" IsTabStop="False">
+                                        <RepeatButton.Template>
+                                            <ControlTemplate TargetType="RepeatButton">
+                                                <Border Background="Transparent" Height="14"/>
+                                            </ControlTemplate>
+                                        </RepeatButton.Template>
+                                    </RepeatButton>
+                                </Track.IncreaseRepeatButton>
                                 <Track.Thumb>
-                                    <Thumb>
+                                    <Thumb Focusable="False">
                                         <Thumb.Template>
                                             <ControlTemplate TargetType="Thumb">
                                                 <Ellipse Width="10" Height="10" Fill="{DynamicResource CyanBrush}">
@@ -359,7 +398,7 @@
             </Border>
             </Grid>
 
-                    <!-- ══════════════════ FULL PLAYER ══════════════════ -->
+            <!-- ══════════════════ FULL PLAYER ══════════════════ -->
             <Grid x:Name="FullPlayer" Visibility="Visible">
                 <Grid.RowDefinitions>
                     <RowDefinition Height="48"/>   <!-- 0: titlebar -->
@@ -655,7 +694,7 @@
                     </Border>
 
                     <!-- Audio control buttons -->
-                            <StackPanel Grid.Row="1" Orientation="Horizontal" HorizontalAlignment="Center">
+                    <StackPanel Grid.Row="1" Orientation="Horizontal" HorizontalAlignment="Center">
 
                         <!-- EQ Toggle -->
                         <Button Style="{StaticResource GhostButton}"
@@ -763,8 +802,7 @@
                 </Grid>
 
                 <!-- PLAYLIST -->
-                <Border Grid.Row="8" Margin="0,0,0,0" BorderThickness="0,1,0,0" BorderBrush="#0DFFFFFF"
-                        >
+                <Border Grid.Row="8" Margin="0,0,0,0" BorderThickness="0,1,0,0" BorderBrush="#0DFFFFFF">
                     <Grid>
                         <Grid.RowDefinitions>
                             <RowDefinition Height="Auto"/>
@@ -862,8 +900,7 @@
 
             </Grid>
 
-                    <!-- MINI PLAYER -->
-            
+            <!-- ══════════════════ MINI PLAYER ══════════════════ -->
             <Border x:Name="MiniPlayer" Visibility="Collapsed"
                     CornerRadius="26" ClipToBounds="True"
                     MouseLeftButtonDown="MiniPlayer_MouseLeftButtonDown">
@@ -880,7 +917,7 @@
                     <RowDefinition Height="3"/>
                 </Grid.RowDefinitions>
 
-                <!--  Main row  -->
+                <!-- Main row -->
                 <Grid Grid.Row="0">
                     <Grid.ColumnDefinitions>
                         <!-- drag handle -->
@@ -973,7 +1010,7 @@
                             </Canvas>
                         </Button>
 
-                        <!-- Play / Pause uses MiniPlayButton style so icon is visible -->
+                        <!-- Play / Pause -->
                         <Button Style="{StaticResource MiniPlayButton}"
                                 Click="PlayPause_Click" ToolTip="Воспроизвести / Пауза">
                             <!-- MiniPlayIcon is a Canvas; code-behind draws triangle or pause bars -->
@@ -998,7 +1035,7 @@
                     <!-- Utility: expand | close/hide -->
                     <StackPanel Grid.Column="5" Orientation="Horizontal" VerticalAlignment="Center">
 
-                                    <!-- Прилипнуть влево -->
+                        <!-- Прилипнуть влево -->
                         <Button Style="{StaticResource GhostButton}" Width="22" Height="22"
                                 Visibility="Collapsed" Click="SideDockLeft_Click" ToolTip="прикрепить к левому краю">
                             <Path Data="M4,4 L4,20 M8,8 L4,12 L8,16"
@@ -1006,7 +1043,7 @@
                                   StrokeStartLineCap="Round" StrokeEndLineCap="Round" Fill="Transparent"/>
                         </Button>
 
-                                    <!-- Развернуть -->
+                        <!-- Развернуть -->
                         <Button Style="{StaticResource GhostButton}" Width="26" Height="22"
                                 Click="MiniMode_Click" ToolTip="Развернуть">
                             <Viewbox Width="14" Height="12" Stretch="Uniform">
@@ -1017,7 +1054,7 @@
                             </Viewbox>
                         </Button>
 
-                                    <!-- Прилипнуть вправо -->
+                        <!-- Прилипнуть вправо -->
                         <Button Style="{StaticResource GhostButton}" Width="22" Height="22"
                                 Visibility="Collapsed" Click="SideDockRight_Click" ToolTip="прикрепить к правому краю">
                             <Path Data="M18,4 L18,20 M14,8 L18,12 L14,16"
@@ -1025,7 +1062,7 @@
                                   StrokeStartLineCap="Round" StrokeEndLineCap="Round" Fill="Transparent"/>
                         </Button>
 
-                                    <!-- Закрыть / спрятать в бок -->
+                        <!-- Закрыть / спрятать в бок -->
                         <Button Style="{StaticResource GhostButton}" Width="26" Height="22"
                                 Click="MiniClose_Click" ToolTip="Спрятать / Закрыть">
                             <Viewbox Width="10" Height="10" Stretch="Uniform">
@@ -1037,7 +1074,7 @@
                     </StackPanel>
                     <Border Width="18" Height="22" Background="Transparent" MouseLeftButtonDown="MiniPlayer_DragMove"/>
 
-                                <!-- Схватить для ресайза (правый край) -->
+                    <!-- Схватить для ресайза (правый край) -->
                     <Border Grid.Column="6" Width="8" Background="Transparent" Cursor="SizeWE"
                             MouseLeftButtonDown="MiniResizeGrip_MouseDown"
                             MouseMove="MiniResizeGrip_MouseMove"
@@ -1050,7 +1087,7 @@
                     </Border>
                 </Grid>
 
-                            <!-- Полоса прогресса -->
+                <!-- Полоса прогресса -->
                 <Grid Grid.Row="1">
                     <Border Background="#15FFFFFF" CornerRadius="0,0,26,26"/>
                     <Border x:Name="MiniProgressBar" HorizontalAlignment="Left" CornerRadius="0,0,0,26" Width="0">
@@ -1070,10 +1107,3 @@
         </Border>
     </Grid>
 </Window>
-
-
-
-
-
-
-

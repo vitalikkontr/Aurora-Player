@@ -7,11 +7,20 @@ namespace AuroraPlayer
 {
     public class StringToColorConverter : IValueConverter
     {
+        private static readonly object TransparentBox = Colors.Transparent;
+
         public object Convert(object value, Type targetType, object parameter, CultureInfo culture)
         {
-            if (value is string s)
-                try { return (Color)ColorConverter.ConvertFromString(s); } catch { }
-            return Colors.Transparent;
+            if (value is string s && !string.IsNullOrWhiteSpace(s))
+            {
+                try
+                {
+                    if (ColorConverter.ConvertFromString(s.Trim()) is Color c)
+                        return c;
+                }
+                catch { }
+            }
+            return TransparentBox;
         }
 
         public object ConvertBack(object value, Type targetType, object parameter, CultureInfo culture)

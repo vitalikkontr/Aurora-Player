@@ -1,4 +1,9 @@
-﻿using NAudio.Wave;
+﻿#nullable enable
+
+using System;
+using System.Collections.Generic;
+using System.Threading;
+using NAudio.Wave;
 using NAudio.Wave.SampleProviders;
 using NAudio.CoreAudioApi;
 
@@ -9,13 +14,13 @@ namespace AuroraPlayer
     /// </summary>
     public sealed class AudioDeviceInfo
     {
-        public int    DeviceNumber { get; }   // -1 = системное по умолчанию
-        public string Name        { get; }
+        public int DeviceNumber { get; }   // -1 = системное по умолчанию
+        public string Name { get; }
 
         public AudioDeviceInfo(int deviceNumber, string name)
         {
             DeviceNumber = deviceNumber;
-            Name         = name;
+            Name = name;
         }
 
         public override string ToString() => Name;
@@ -26,7 +31,11 @@ namespace AuroraPlayer
         private sealed class SwappableSampleProvider : ISampleProvider
         {
             private readonly object _sync = new();
+            private readonly object _readLock = new();
+            private readonly ManualResetEventSlim _readIdle = new(true);
+
             private ISampleProvider? _source;
+            private int _activeReads;
             private int _zeroReadStreak;
             private const int EndOfStreamZeroReads = 3;
 
@@ -46,44 +55,93 @@ namespace AuroraPlayer
                 }
             }
 
+            public void WaitForIdle(int timeoutMs = 500)
+            {
+                try { _readIdle.Wait(timeoutMs); }
+                catch (ObjectDisposedException) { }
+            }
+
+            public void DisposeWaitHandle()
+            {
+                try { _readIdle.Dispose(); }
+                catch { }
+            }
+
             public event EventHandler? SourceReturnedZero;
 
             public int Read(float[] buffer, int offset, int count)
             {
-                ISampleProvider? source;
-                lock (_sync)
+                lock (_readLock)
                 {
-                    source = _source;
+                    _activeReads++;
+                    try { _readIdle.Reset(); } catch (ObjectDisposedException) { }
                 }
 
-                if (source == null) return 0;
-                int read = source.Read(buffer, offset, count);
-                if (read == 0)
+                try
                 {
-                    // Некоторые источники потоков (особенно декодеры процессов/конвейеров) могут ненадолго возвращать 0
-                    // Во время запуска. Подтверждайте конец потока только после нескольких чтений нулей.
-                    _zeroReadStreak++;
-                    if (_zeroReadStreak < EndOfStreamZeroReads)
+                    ISampleProvider? source;
+                    lock (_sync)
                     {
-                        Array.Clear(buffer, offset, count);
-                        return count;
+                        source = _source;
                     }
 
-                    _zeroReadStreak = 0;
-                    SourceReturnedZero?.Invoke(this, EventArgs.Empty);
+                    if (source == null) return 0;
+
+                    int read = source.Read(buffer, offset, count);
+                    if (read == 0)
+                    {
+                        bool shouldNotify = false;
+                        lock (_sync)
+                        {
+                            // Игнорируем 0 от уже заменённого источника
+                            if (!ReferenceEquals(_source, source))
+                                return 0;
+
+                            _zeroReadStreak++;
+                            if (_zeroReadStreak < EndOfStreamZeroReads)
+                            {
+                                Array.Clear(buffer, offset, count);
+                                return count;
+                            }
+
+                            _zeroReadStreak = 0;
+                            shouldNotify = true;
+                        }
+
+                        if (shouldNotify)
+                            SourceReturnedZero?.Invoke(this, EventArgs.Empty);
+                    }
+                    else
+                    {
+                        lock (_sync)
+                        {
+                            if (ReferenceEquals(_source, source))
+                                _zeroReadStreak = 0;
+                        }
+                    }
+
+                    return read;
                 }
-                else
+                finally
                 {
-                    _zeroReadStreak = 0;
+                    lock (_readLock)
+                    {
+                        _activeReads--;
+                        if (_activeReads <= 0)
+                        {
+                            _activeReads = 0;
+                            try { _readIdle.Set(); } catch (ObjectDisposedException) { }
+                        }
+                    }
                 }
-                return read;
             }
         }
 
         private readonly object _sync = new();
         private readonly WaveFormat _outputFormat;
         private readonly SwappableSampleProvider _router;
-        private WaveOutEvent _output;
+        private readonly EventHandler _sourceZeroHandler;
+        private WaveOutEvent? _output;
         private bool _disposed;
         private volatile bool _manualStop;
         private readonly int _desiredLatencyMs;
@@ -106,19 +164,22 @@ namespace AuroraPlayer
                 try
                 {
                     var caps = WaveOut.GetCapabilities(i);
-                    list.Add(new AudioDeviceInfo(i, caps.ProductName));
+                    string name = caps.ProductName?.TrimEnd('\0', ' ') ?? $"Устройство #{i}";
+                    if (string.IsNullOrWhiteSpace(name))
+                        name = $"Устройство #{i}";
+                    list.Add(new AudioDeviceInfo(i, name));
                 }
                 catch { }
             }
             return list;
         }
 
-        /// <summary>Находит DeviceNumber по сохранённому имени. Возвращает -1 если не найдено.</summary>
+        /// <summary>Находит DeviceNumber по сохранённому имени. Возвращает -1, если не найдено.</summary>
         public static int FindDeviceByName(string? name)
         {
-            if (string.IsNullOrEmpty(name)) return -1;
+            if (string.IsNullOrWhiteSpace(name)) return -1;
             foreach (var d in EnumerateDevices())
-                if (string.Equals(d.Name, name, StringComparison.OrdinalIgnoreCase))
+                if (d.DeviceNumber != -1 && string.Equals(d.Name, name, StringComparison.OrdinalIgnoreCase))
                     return d.DeviceNumber;
             return -1;
         }
@@ -134,8 +195,7 @@ namespace AuroraPlayer
                     return (fallbackSampleRate, fallbackChannels);
 
                 int sampleRate = mix.SampleRate > 0 ? mix.SampleRate : fallbackSampleRate;
-                int channels = mix.Channels > 0 ? mix.Channels : fallbackChannels;
-                channels = Math.Clamp(channels, 1, 2);
+                int channels = mix.Channels > 0 ? Math.Clamp(mix.Channels, 1, 2) : fallbackChannels;
                 return (sampleRate, channels);
             }
             catch
@@ -149,31 +209,67 @@ namespace AuroraPlayer
 
         public PlaybackState PlaybackState
         {
-            get { lock (_sync) { return _disposed ? PlaybackState.Stopped : _output.PlaybackState; } }
+            get
+            {
+                lock (_sync)
+                {
+                    if (_disposed || _output == null)
+                        return PlaybackState.Stopped;
+                    return _output.PlaybackState;
+                }
+            }
         }
 
         /// <param name="deviceNumber">Номер WaveOut-устройства (-1 = системное по умолчанию).</param>
         public AudioOutputEngine(int sampleRate = 48000, int channels = 2,
                                  int desiredLatencyMs = 200, int deviceNumber = -1)
         {
-            _desiredLatencyMs = desiredLatencyMs;
+            _desiredLatencyMs = Math.Max(20, desiredLatencyMs);
             var detected = DetectOutputFormat(sampleRate, channels);
             _outputFormat = WaveFormat.CreateIeeeFloatWaveFormat(detected.sampleRate, detected.channels);
             _router = new SwappableSampleProvider(_outputFormat);
 
-            _output = CreateWaveOut(deviceNumber);
-            _output.Init(_router);
-            _router.SourceReturnedZero += (s, e) =>
+            _sourceZeroHandler = (_, _) =>
             {
-                if (!_manualStop) TrackEnded?.Invoke(this, EventArgs.Empty);
+                if (!_manualStop && !_disposed)
+                    TrackEnded?.Invoke(this, EventArgs.Empty);
             };
+            _router.SourceReturnedZero += _sourceZeroHandler;
+
+            _output = InitWaveOutWithFallback(deviceNumber);
+        }
+
+        private WaveOutEvent? InitWaveOutWithFallback(int deviceNumber)
+        {
+            WaveOutEvent? output = null;
+            try
+            {
+                output = CreateWaveOut(deviceNumber);
+                output.Init(_router);
+                return output;
+            }
+            catch
+            {
+                try { output?.Dispose(); } catch { }
+                if (deviceNumber != -1)
+                {
+                    try
+                    {
+                        var fallback = CreateWaveOut(-1);
+                        fallback.Init(_router);
+                        return fallback;
+                    }
+                    catch { }
+                }
+                return null;
+            }
         }
 
         // ── Горячая замена устройства ─────────────────────────────────────────────
 
         /// <summary>
         /// Переключает вывод на другое устройство без перезапуска плеера.
-        /// Воспроизведение возобновляется автоматически если было активно.
+        /// Воспроизведение возобновляется автоматически, если было активно.
         /// </summary>
         public void SwitchDevice(int newDeviceNumber)
         {
@@ -181,17 +277,46 @@ namespace AuroraPlayer
             {
                 if (_disposed) return;
 
-                bool wasPlaying = _output.PlaybackState == PlaybackState.Playing;
+                bool wasPlaying = false;
+                if (_output != null)
+                {
+                    try { wasPlaying = _output.PlaybackState == PlaybackState.Playing; } catch { }
+                }
 
                 _manualStop = true;
-                try { _output.Stop(); } catch { }
-                _output.Dispose();
-                _manualStop = false;
+                try
+                {
+                    if (_output != null)
+                    {
+                        try { _output.Stop(); } catch { }
+                        _router.WaitForIdle(500);
+                        try { _output.Dispose(); } catch { }
+                        _output = null;
+                    }
 
-                _output = CreateWaveOut(newDeviceNumber);
-                _output.Init(_router);
+                    WaveOutEvent? next = null;
+                    try
+                    {
+                        next = CreateWaveOut(newDeviceNumber);
+                        next.Init(_router);
+                        _output = next;
+                        next = null;
 
-                if (wasPlaying) _output.Play();
+                        if (wasPlaying)
+                            _output.Play();
+                    }
+                    catch
+                    {
+                        try { next?.Dispose(); } catch { }
+                        // Пытаемся восстановить вывод на системное устройство, чтобы движок остался рабочим
+                        _output = InitWaveOutWithFallback(-1);
+                        throw;
+                    }
+                }
+                finally
+                {
+                    _manualStop = false;
+                }
             }
         }
 
@@ -199,8 +324,8 @@ namespace AuroraPlayer
         {
             return new WaveOutEvent
             {
-                DeviceNumber    = Math.Max(deviceNumber, -1),
-                DesiredLatency  = _desiredLatencyMs,
+                DeviceNumber = Math.Max(deviceNumber, -1),
+                DesiredLatency = _desiredLatencyMs,
                 NumberOfBuffers = 3,
             };
         }
@@ -215,7 +340,7 @@ namespace AuroraPlayer
         {
             lock (_sync)
             {
-                if (_disposed) return;
+                if (_disposed || _output == null) return;
                 _output.Play();
             }
         }
@@ -224,7 +349,7 @@ namespace AuroraPlayer
         {
             lock (_sync)
             {
-                if (_disposed) return;
+                if (_disposed || _output == null) return;
                 _output.Pause();
             }
         }
@@ -232,35 +357,53 @@ namespace AuroraPlayer
         public void Stop()
         {
             _manualStop = true;
-            lock (_sync)
+            try
             {
-                if (!_disposed) _output.Stop();
+                lock (_sync)
+                {
+                    if (!_disposed && _output != null)
+                    {
+                        try { _output.Stop(); } catch { }
+                    }
+                }
             }
-            _manualStop = false;
+            finally
+            {
+                _manualStop = false;
+            }
         }
 
         public void StopAndWait()
         {
             _manualStop = true;
-            SetSource(null);
-            lock (_sync)
+            try
             {
-                if (!_disposed) _output.Stop();
+                _router.SetSource(null);
+                lock (_sync)
+                {
+                    if (!_disposed && _output != null)
+                    {
+                        try { _output.Stop(); } catch { }
+                    }
+                }
+                _router.WaitForIdle(500);
             }
-            _manualStop = false;
+            finally
+            {
+                _manualStop = false;
+            }
         }
 
         private ISampleProvider EnsureOutputFormat(ISampleProvider source)
         {
             ISampleProvider current = source;
 
-            if (current.WaveFormat.SampleRate != _outputFormat.SampleRate)
-                current = new WdlResamplingSampleProvider(current, _outputFormat.SampleRate);
-
+            // Сначала приводим число каналов к целевому (до ресэмплинга),
+            // чтобы не тратить CPU на ресэмплинг лишних каналов и не падать в ToStereo() на >2ch.
             if (_outputFormat.Channels == 1)
             {
                 if (current.WaveFormat.Channels > 2)
-                    current = current.ToStereo();
+                    current = new MultiplexingSampleProvider(new[] { current }, 2);
 
                 if (current.WaveFormat.Channels == 2)
                     current = current.ToMono(0.5f, 0.5f);
@@ -269,24 +412,42 @@ namespace AuroraPlayer
             {
                 if (current.WaveFormat.Channels == 1)
                     current = new MonoToStereoSampleProvider(current);
-                else if (current.WaveFormat.Channels != 2)
-                    current = current.ToStereo();
+                else if (current.WaveFormat.Channels > 2)
+                    current = new MultiplexingSampleProvider(new[] { current }, 2);
             }
+
+            if (current.WaveFormat.SampleRate != _outputFormat.SampleRate)
+                current = new WdlResamplingSampleProvider(current, _outputFormat.SampleRate);
 
             return current;
         }
 
         public void Dispose()
         {
+            WaveOutEvent? output;
             lock (_sync)
             {
                 if (_disposed) return;
                 _disposed = true;
+                _manualStop = true;
+                output = _output;
+                _output = null;
             }
 
+            _router.SourceReturnedZero -= _sourceZeroHandler;
             _router.SetSource(null);
-            try { _output.Stop(); } catch { }
-            _output.Dispose();
+
+            if (output != null)
+            {
+                try { output.Stop(); } catch { }
+                _router.WaitForIdle(500);
+                try { output.Dispose(); } catch { }
+            }
+
+            _router.DisposeWaitHandle();
+            TrackEnded = null;
         }
     }
 }
+
+#nullable restore

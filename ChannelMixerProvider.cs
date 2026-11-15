@@ -1,10 +1,15 @@
 // ChannelMixerProvider.cs - умное микширование каналов.
 // Поддерживает:
-//   - Mono -> Stereo (c Haas-эффектом ~1 мс)
+//   - Mono -> Stereo (с Haas-эффектом ~1 мс)
 //   - Stereo -> Mono (суммирование с нормализацией)
 //   - Многоканал (3-8+) -> Stereo (матричное даунмикширование по ITU-R BS.775)
 //   - Многоканал -> Mono
 //   - Passthrough
+#nullable enable
+
+using System;
+using System.Buffers;
+using System.Threading;
 using NAudio.Wave;
 
 namespace AuroraPlayer
@@ -35,15 +40,17 @@ namespace AuroraPlayer
         private MixMode _mode;
         private float _width = 1.0f; // Для WideStero / NarrowStereo: 0..2
         private int _inChannels;
-
-        // Вес LFE (саббас).
-        // 0.0 = LFE полностью отбрасывается (стандарт для headphone downmix)
-        // 0.5 = половина LFE подмешивается в оба канала
         private float _lfeWeight = 0.0f;
+
+        // Кольцевой буфер задержки Haas (~1 мс) — используется только в потоке Read()
+        private float[] _haasDelay;
+        private int _haasDelayPos;
+        private bool _resetHaasDelay;
+
         public float LfeWeight
         {
             get { lock (_sync) return _lfeWeight; }
-            set { lock (_sync) _lfeWeight = Math.Clamp(value, 0f, 1f); }
+            set { lock (_sync) _lfeWeight = float.IsFinite(value) ? Math.Clamp(value, 0f, 1f) : 0f; }
         }
 
         public const int OutputChannels = 2; // Всегда stereo на выходе
@@ -52,44 +59,64 @@ namespace AuroraPlayer
         public MixMode Mode
         {
             get { lock (_sync) return _mode; }
-            set { lock (_sync) _mode = value; }
+            set
+            {
+                lock (_sync)
+                {
+                    if (_mode != value)
+                    {
+                        _mode = value;
+                        _resetHaasDelay = true;
+                    }
+                }
+            }
         }
 
         /// <summary>Ширина stereo для WideStero/NarrowStereo: 0=Mono, 1=Original, 2=Max Wide.</summary>
         public float Width
         {
             get { lock (_sync) return _width; }
-            set { lock (_sync) _width = Math.Clamp(value, 0f, 2f); }
+            set { lock (_sync) _width = float.IsFinite(value) ? Math.Clamp(value, 0f, 2f) : 1.0f; }
         }
 
-        public int InputChannels => _inChannels;
+        public int InputChannels => Volatile.Read(ref _inChannels);
 
         public ChannelMixerProvider(ISampleProvider source, MixMode mode = MixMode.Passthrough)
         {
-            _source = source;
+            _source = source ?? throw new ArgumentNullException(nameof(source));
             _inChannels = source.WaveFormat.Channels;
             _mode = mode;
             WaveFormat = WaveFormat.CreateIeeeFloatWaveFormat(source.WaveFormat.SampleRate, OutputChannels);
+            _haasDelay = new float[Math.Max(1, source.WaveFormat.SampleRate / 1000)];
         }
 
         /// <summary>Горячая замена источника (вызывается из ReplaceSource в SurroundProvider).</summary>
         public void ReplaceSource(ISampleProvider newSource)
         {
+            if (newSource == null) throw new ArgumentNullException(nameof(newSource));
+
             lock (_sync)
             {
                 _source = newSource;
-                _inChannels = newSource.WaveFormat.Channels;
+                Volatile.Write(ref _inChannels, newSource.WaveFormat.Channels);
                 WaveFormat = WaveFormat.CreateIeeeFloatWaveFormat(newSource.WaveFormat.SampleRate, OutputChannels);
+                _resetHaasDelay = true;
             }
         }
 
         public int Read(float[] buffer, int offset, int count)
         {
+            if (buffer == null) throw new ArgumentNullException(nameof(buffer));
+            if (offset < 0 || count < 0 || offset + count > buffer.Length)
+                throw new ArgumentOutOfRangeException(nameof(count));
+
             ISampleProvider src;
             MixMode mode;
             float width;
             float lfe;
             int inCh;
+            int sampleRate;
+            bool resetDelay;
 
             lock (_sync)
             {
@@ -98,26 +125,51 @@ namespace AuroraPlayer
                 width = _width;
                 lfe = _lfeWeight;
                 inCh = _inChannels;
+                sampleRate = WaveFormat.SampleRate;
+                resetDelay = _resetHaasDelay;
+                _resetHaasDelay = false;
+            }
+
+            if (inCh <= 0 || count < OutputChannels)
+                return 0;
+
+            int neededDelay = Math.Max(1, sampleRate / 1000);
+            if (_haasDelay.Length != neededDelay)
+            {
+                _haasDelay = new float[neededDelay];
+                _haasDelayPos = 0;
+            }
+            else if (resetDelay)
+            {
+                Array.Clear(_haasDelay, 0, _haasDelay.Length);
+                _haasDelayPos = 0;
             }
 
             int frameCount = count / OutputChannels;
             int inSamplesReq = frameCount * inCh;
+            if (inSamplesReq <= 0)
+                return 0;
 
-            float[] inBuf = System.Buffers.ArrayPool<float>.Shared.Rent(inSamplesReq);
+            float[] inBuf = ArrayPool<float>.Shared.Rent(inSamplesReq);
             try
             {
                 int inRead = src.Read(inBuf, 0, inSamplesReq);
+                if (inRead <= 0) return 0;
+
                 int framesRead = inRead / inCh;
+                if (framesRead <= 0) return 0;
+
                 int outSamples = framesRead * OutputChannels;
 
                 if (mode == MixMode.Passthrough)
                 {
                     if (inCh == 1)
-                        MonoToWideStereo(inBuf, buffer, offset, framesRead, 0f); // dual-mono в AUTO
+                        MonoToWideStereo(inBuf, buffer, offset, framesRead, 0f);
                     else if (inCh == 2)
-                        Buffer.BlockCopy(inBuf, 0, buffer, offset * sizeof(float), inRead * sizeof(float));
+                        Buffer.BlockCopy(inBuf, 0, buffer, offset * sizeof(float), outSamples * sizeof(float));
                     else
                         SmartDownmix(inBuf, buffer, offset, framesRead, inCh, 1.0f, lfe);
+
                     return outSamples;
                 }
 
@@ -149,7 +201,7 @@ namespace AuroraPlayer
                         else if (inCh == 2)
                             MidSideProcess(inBuf, buffer, offset, framesRead, Math.Clamp(width * 0.5f, 0f, 1f));
                         else
-                            SmartDownmix(inBuf, buffer, offset, framesRead, inCh, 0.5f, lfe);
+                            SmartDownmix(inBuf, buffer, offset, framesRead, inCh, Math.Clamp(width * 0.5f, 0f, 1f), lfe);
                         break;
                 }
 
@@ -157,25 +209,41 @@ namespace AuroraPlayer
             }
             finally
             {
-                System.Buffers.ArrayPool<float>.Shared.Return(inBuf);
+                ArrayPool<float>.Shared.Return(inBuf);
             }
         }
 
         /// <summary>
-        /// Mono -> Stereo с Haas-эффектом (~1 мс задержка на R-канале).
-        /// widthFactor: 0 = идентичные каналы, 0.5 = заметная ширина.
+        /// Mono -> Stereo с непрерывным Haas-эффектом (~1 мс задержка на R-канале).
         /// </summary>
-        private static void MonoToWideStereo(float[] src, float[] dst, int offset, int frames, float widthFactor)
+        private void MonoToWideStereo(float[] src, float[] dst, int offset, int frames, float widthFactor)
         {
-            const int DelayFrames = 48; // ~1 мс при 48 kHz
+            if (widthFactor <= 0f)
+            {
+                for (int i = 0; i < frames; i++)
+                {
+                    float direct = Math.Clamp(src[i], -1f, 1f);
+                    dst[offset + i * 2] = direct;
+                    dst[offset + i * 2 + 1] = direct;
+                }
+                return;
+            }
+
+            int delayLen = _haasDelay.Length;
+            float dryMix = 1f - widthFactor * 0.5f;
+            float wetMix = widthFactor * 0.5f;
+
             for (int i = 0; i < frames; i++)
             {
                 float s = src[i];
-                float delayed = i >= DelayFrames ? src[i - DelayFrames] : 0f;
-                float direct = Math.Clamp(s, -1f, 1f);
-                float haas = Math.Clamp(s * (1f - widthFactor * 0.5f) + delayed * widthFactor * 0.5f, -1f, 1f);
-                dst[offset + i * 2] = direct;
-                dst[offset + i * 2 + 1] = haas;
+                float delayed = _haasDelay[_haasDelayPos];
+                _haasDelay[_haasDelayPos] = s;
+                _haasDelayPos++;
+                if (_haasDelayPos >= delayLen)
+                    _haasDelayPos = 0;
+
+                dst[offset + i * 2] = Math.Clamp(s, -1f, 1f);
+                dst[offset + i * 2 + 1] = Math.Clamp(s * dryMix + delayed * wetMix, -1f, 1f);
             }
         }
 
@@ -186,15 +254,15 @@ namespace AuroraPlayer
             {
                 float sum = 0f;
                 int used = 0;
+                int baseIdx = i * inCh;
                 for (int ch = 0; ch < inCh && ch < 8; ch++)
                 {
-                    // LFE (канал 3 в 5.1) подмешиваем по коэффициенту lfe.
                     if (inCh >= 6 && ch == 3)
                     {
-                        sum += src[i * inCh + ch] * lfe;
+                        sum += src[baseIdx + ch] * lfe;
                         continue;
                     }
-                    sum += src[i * inCh + ch];
+                    sum += src[baseIdx + ch];
                     used++;
                 }
                 float mono = Math.Clamp(sum / Math.Max(used, 1), -1f, 1f);
@@ -214,9 +282,10 @@ namespace AuroraPlayer
             {
                 float L = 0f;
                 float R = 0f;
+                int baseIdx = i * inCh;
                 for (int ch = 0; ch < cols; ch++)
                 {
-                    float s = src[i * inCh + ch];
+                    float s = src[baseIdx + ch];
                     if (inCh >= 6 && ch == 3)
                     {
                         L += s * lfe;
@@ -227,7 +296,6 @@ namespace AuroraPlayer
                     R += s * DownmixTables.R[ch];
                 }
 
-                // Mid/Side расширение / сужение.
                 float mid = (L + R) * 0.5f;
                 float side = (L - R) * 0.5f * widthScale;
                 dst[offset + i * 2] = Math.Clamp(mid + side, -1f, 1f);
@@ -250,3 +318,5 @@ namespace AuroraPlayer
         }
     }
 }
+
+#nullable restore

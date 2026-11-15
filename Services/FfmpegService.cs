@@ -1,3 +1,5 @@
+#nullable enable
+
 using System;
 using System.Collections.Generic;
 using System.IO;
@@ -9,69 +11,108 @@ using IOPath = System.IO.Path;
 namespace AuroraPlayer
 {
     /// <summary>
-    /// Всё что связано с поиском ffmpeg, декодированием APE/WV и работой с путями.
+    /// Всё, что связано с поиском ffmpeg, декодированием APE/WV и работой с путями.
     /// </summary>
     public static class FfmpegService
     {
-        public const int  ProbeRetryCount      = 60;  // 60 × 50ms = 3s (было 900 × 50ms = 45s)
-        public const int  ProbeRetryDelayMs    = 50;
-        // APE через именованный pipe делает seek в конец файла при инициализации —
-        // это невозможно через однонаправленный pipe. Поэтому APE/WV с кириллическим
-        // путём сразу открываем через ApeRingBufferStream минуя FfmpegDecodeStream.
+        public const int ProbeRetryCount = 60; // 60 × 50ms = 3s
+        public const int ProbeRetryDelayMs = 50;
+
+        private static readonly object _ffmpegFindSync = new();
+        private static string? _cachedFfmpegPath;
 
         private static readonly object _apeCacheSync = new();
         private static readonly Dictionary<string, string> _apeNormalizedCache =
             new(StringComparer.OrdinalIgnoreCase);
+        private static readonly Queue<string> _apeCacheOrder = new();
+
+        private static readonly object _logSync = new();
+        private static bool _logDirEnsured;
 
         // ─── Поиск ffmpeg ─────────────────────────────────────────────────────────
 
         public static string? FindFfmpeg()
         {
-            string? exeDir = IOPath.GetDirectoryName(Environment.ProcessPath ?? "");
-
-            foreach (var name in new[] { "ffmpeg.exe", "ffmpeg" })
+            lock (_ffmpegFindSync)
             {
-                string p = IOPath.Combine(exeDir ?? "", name);
-                if (File.Exists(p)) return p;
+                if (_cachedFfmpegPath != null && File.Exists(_cachedFfmpegPath))
+                    return _cachedFfmpegPath;
+                _cachedFfmpegPath = null;
+            }
+
+            string? found = FindFfmpegUncached();
+            if (found != null)
+            {
+                lock (_ffmpegFindSync)
+                    _cachedFfmpegPath = found;
+            }
+            return found;
+        }
+
+        private static string? FindFfmpegUncached()
+        {
+            string? exeDir = IOPath.GetDirectoryName(Environment.ProcessPath ?? "");
+            if (string.IsNullOrWhiteSpace(exeDir))
+                exeDir = AppContext.BaseDirectory;
+
+            if (!string.IsNullOrWhiteSpace(exeDir))
+            {
+                foreach (var name in new[] { "ffmpeg.exe", "ffmpeg" })
+                {
+                    string p = IOPath.Combine(exeDir, name);
+                    if (File.Exists(p)) return p;
+                }
             }
 
             string? pathEnv = Environment.GetEnvironmentVariable("PATH");
-            if (pathEnv != null)
-                foreach (var dir in pathEnv.Split(';'))
+            if (!string.IsNullOrEmpty(pathEnv))
+            {
+                foreach (var rawDir in pathEnv.Split(';', StringSplitOptions.RemoveEmptyEntries))
                 {
-                    string p = IOPath.Combine(dir.Trim(), "ffmpeg.exe");
-                    if (File.Exists(p)) return p;
+                    string dir = rawDir.Trim().Trim('"');
+                    if (string.IsNullOrWhiteSpace(dir)) continue;
+                    try
+                    {
+                        string p = IOPath.Combine(dir, "ffmpeg.exe");
+                        if (File.Exists(p)) return p;
+                    }
+                    catch { }
                 }
+            }
 
-            string pf        = Environment.GetFolderPath(Environment.SpecialFolder.ProgramFiles);
-            string pfx       = Environment.GetFolderPath(Environment.SpecialFolder.ProgramFilesX86);
-            string localApp  = Environment.GetFolderPath(Environment.SpecialFolder.LocalApplicationData);
-            string userProf  = Environment.GetFolderPath(Environment.SpecialFolder.UserProfile);
+            string pf = Environment.GetFolderPath(Environment.SpecialFolder.ProgramFiles);
+            string pfx = Environment.GetFolderPath(Environment.SpecialFolder.ProgramFilesX86);
+            string localApp = Environment.GetFolderPath(Environment.SpecialFolder.LocalApplicationData);
+            string userProf = Environment.GetFolderPath(Environment.SpecialFolder.UserProfile);
 
             var searchDirs = new[]
             {
                 IOPath.Combine(pf,  "ffmpeg", "bin"),
                 IOPath.Combine(pfx, "ffmpeg", "bin"),
-                IOPath.Combine(@"C:\ffmpeg", "bin"),
-                IOPath.Combine(@"C:\ffmpeg"),
-                IOPath.Combine(@"C:\tools\ffmpeg", "bin"),
+                @"C:\ffmpeg\bin",
+                @"C:\ffmpeg",
+                @"C:\tools\ffmpeg\bin",
                 IOPath.Combine(localApp, "Microsoft", "WinGet", "Packages",
                     "Gyan.FFmpeg_Microsoft.Winget.Source_8wekyb3d8bbwe", "ffmpeg-7.1-full_build", "bin"),
                 IOPath.Combine(localApp, "Microsoft", "WinGet", "Packages",
                     "Gyan.FFmpeg_Microsoft.Winget.Source_8wekyb3d8bbwe", "ffmpeg-7.0-full_build", "bin"),
                 IOPath.Combine(userProf, "scoop", "apps", "ffmpeg", "current", "bin"),
                 IOPath.Combine(userProf, "scoop", "shims"),
-                IOPath.Combine(@"C:\ProgramData\chocolatey", "bin"),
+                @"C:\ProgramData\chocolatey\bin",
                 IOPath.Combine(pf, "Chocolatey", "bin"),
             };
 
             foreach (var dir in searchDirs)
             {
-                string p = IOPath.Combine(dir, "ffmpeg.exe");
-                if (File.Exists(p)) return p;
+                if (string.IsNullOrWhiteSpace(dir)) continue;
+                try
+                {
+                    string p = IOPath.Combine(dir, "ffmpeg.exe");
+                    if (File.Exists(p)) return p;
+                }
+                catch { }
             }
 
-            // WinGet dynamic search (ограничиваем глубину до 5 уровней чтобы не тормозить)
             try
             {
                 string wingetPkgs = IOPath.Combine(localApp, "Microsoft", "WinGet", "Packages");
@@ -81,8 +122,8 @@ namespace AuroraPlayer
                         new EnumerationOptions
                         {
                             RecurseSubdirectories = true,
-                            MaxRecursionDepth     = 5,
-                            IgnoreInaccessible    = true,
+                            MaxRecursionDepth = 5,
+                            IgnoreInaccessible = true,
                         }).FirstOrDefault();
                     if (found != null) return found;
                 }
@@ -94,7 +135,15 @@ namespace AuroraPlayer
 
         // ─── Пути ────────────────────────────────────────────────────────────────
 
-        public static bool PathHasNonAscii(string path) => path.Any(c => c > 127);
+        public static bool PathHasNonAscii(string? path)
+        {
+            if (string.IsNullOrEmpty(path)) return false;
+            for (int i = 0; i < path.Length; i++)
+            {
+                if (path[i] > 127) return true;
+            }
+            return false;
+        }
 
         /// <summary>
         /// Возвращает гарантированно ASCII-путь к временной папке.
@@ -105,11 +154,17 @@ namespace AuroraPlayer
             string temp = IOPath.GetTempPath();
             if (!PathHasNonAscii(temp)) return temp;
 
-            try { string ctemp = @"C:\Temp"; Directory.CreateDirectory(ctemp); return ctemp; }
+            try
+            {
+                const string ctemp = @"C:\Temp";
+                Directory.CreateDirectory(ctemp);
+                return ctemp;
+            }
             catch { }
 
             string? exeDir = IOPath.GetDirectoryName(Environment.ProcessPath ?? "");
-            if (exeDir != null && !PathHasNonAscii(exeDir)) return exeDir;
+            if (!string.IsNullOrWhiteSpace(exeDir) && !PathHasNonAscii(exeDir))
+                return exeDir;
 
             return temp;
         }
@@ -124,7 +179,7 @@ namespace AuroraPlayer
             {
                 if (string.IsNullOrEmpty(longPath) || !File.Exists(longPath)) return null;
                 var sb = new StringBuilder(4096);
-                int n  = GetShortPathName(longPath, sb, sb.Capacity);
+                int n = GetShortPathName(longPath, sb, sb.Capacity);
                 if (n <= 0 || n >= sb.Capacity) return null;
                 string s = sb.ToString();
                 if (string.Equals(s, longPath, StringComparison.OrdinalIgnoreCase)) return null;
@@ -140,19 +195,46 @@ namespace AuroraPlayer
             macOffset = 0;
             try
             {
-                if (!File.Exists(path) || !path.EndsWith(".ape", StringComparison.OrdinalIgnoreCase))
+                if (string.IsNullOrWhiteSpace(path) ||
+                    !File.Exists(path) ||
+                    !path.EndsWith(".ape", StringComparison.OrdinalIgnoreCase))
                     return false;
 
                 using var input = new FileStream(path, FileMode.Open, FileAccess.Read, FileShare.Read);
                 if (input.Length < 4) return false;
 
-                int    scanBytes = (int)Math.Min(input.Length, 16L * 1024 * 1024);
-                var    scan      = new byte[scanBytes];
-                int    read      = input.Read(scan, 0, scanBytes);
+                const long maxScanBytes = 16L * 1024 * 1024;
+                const int chunkSize = 65536;
+                var buffer = new byte[chunkSize + 3];
+                long fileOffset = 0;
+                int carry = 0;
 
-                for (int i = 0; i <= read - 4; i++)
-                    if (scan[i] == 'M' && scan[i+1] == 'A' && scan[i+2] == 'C' && scan[i+3] == ' ')
-                    { macOffset = i; return true; }
+                while (fileOffset < maxScanBytes)
+                {
+                    int toRead = (int)Math.Min(chunkSize, maxScanBytes - fileOffset);
+                    int read = input.Read(buffer, carry, toRead);
+                    if (read <= 0) break;
+
+                    int total = carry + read;
+                    for (int i = 0; i <= total - 4; i++)
+                    {
+                        if (buffer[i] == (byte)'M' &&
+                            buffer[i + 1] == (byte)'A' &&
+                            buffer[i + 2] == (byte)'C' &&
+                            buffer[i + 3] == (byte)' ')
+                        {
+                            long foundAt = (fileOffset - carry) + i;
+                            if (foundAt > int.MaxValue) return false;
+                            macOffset = (int)foundAt;
+                            return true;
+                        }
+                    }
+
+                    fileOffset += read;
+                    carry = Math.Min(3, total);
+                    if (carry > 0)
+                        Buffer.BlockCopy(buffer, total - carry, buffer, 0, carry);
+                }
 
                 return false;
             }
@@ -164,7 +246,8 @@ namespace AuroraPlayer
             normalizedApePath = "";
             try
             {
-                if (!File.Exists(originalPath) ||
+                if (string.IsNullOrWhiteSpace(originalPath) ||
+                    !File.Exists(originalPath) ||
                     !originalPath.EndsWith(".ape", StringComparison.OrdinalIgnoreCase))
                     return false;
 
@@ -174,31 +257,51 @@ namespace AuroraPlayer
                 lock (_apeCacheSync)
                 {
                     if (_apeNormalizedCache.TryGetValue(originalPath, out string? cached) && File.Exists(cached))
-                    { normalizedApePath = cached; return true; }
+                    {
+                        normalizedApePath = cached;
+                        return true;
+                    }
                     _apeNormalizedCache.Remove(originalPath);
                 }
 
-                using var input = new FileStream(originalPath, FileMode.Open, FileAccess.Read, FileShare.Read);
                 string tmp = IOPath.Combine(GetSafeAsciiTempPath(), $"aurora_ape_norm_{Guid.NewGuid():N}.ape");
-                input.Position = macOffset;
-                using (var output = new FileStream(tmp, FileMode.Create))
+                using (var input = new FileStream(originalPath, FileMode.Open, FileAccess.Read, FileShare.Read))
+                {
+                    if (macOffset >= input.Length) return false;
+                    input.Position = macOffset;
+                    using var output = new FileStream(tmp, FileMode.Create, FileAccess.Write, FileShare.None);
                     input.CopyTo(output);
+                }
 
                 if (!File.Exists(tmp) || new FileInfo(tmp).Length < 128)
-                { try { File.Delete(tmp); } catch { } return false; }
+                {
+                    try { File.Delete(tmp); } catch { }
+                    return false;
+                }
 
                 lock (_apeCacheSync)
                 {
-                    // Лимит кэша: не более 10 записей, выбрасываем самую старую
-                    if (_apeNormalizedCache.Count >= 10)
+                    // Если параллельный поток уже успел создать кэш для этого файла — используем его
+                    if (_apeNormalizedCache.TryGetValue(originalPath, out string? existing) && File.Exists(existing))
                     {
-                        string oldest = _apeNormalizedCache.Keys.First();
-                        if (_apeNormalizedCache.TryGetValue(oldest, out string? oldPath))
-                            try { File.Delete(oldPath); } catch { }
-                        _apeNormalizedCache.Remove(oldest);
+                        try { File.Delete(tmp); } catch { }
+                        normalizedApePath = existing;
+                        return true;
                     }
+
+                    while (_apeNormalizedCache.Count >= 10 && _apeCacheOrder.Count > 0)
+                    {
+                        string oldestKey = _apeCacheOrder.Dequeue();
+                        if (_apeNormalizedCache.Remove(oldestKey, out string? oldPath))
+                        {
+                            try { if (File.Exists(oldPath)) File.Delete(oldPath); } catch { }
+                        }
+                    }
+
                     _apeNormalizedCache[originalPath] = tmp;
+                    _apeCacheOrder.Enqueue(originalPath);
                 }
+
                 normalizedApePath = tmp;
                 return true;
             }
@@ -210,8 +313,11 @@ namespace AuroraPlayer
             lock (_apeCacheSync)
             {
                 foreach (string path in _apeNormalizedCache.Values.Distinct(StringComparer.OrdinalIgnoreCase))
+                {
                     try { if (File.Exists(path)) File.Delete(path); } catch { }
+                }
                 _apeNormalizedCache.Clear();
+                _apeCacheOrder.Clear();
             }
         }
 
@@ -223,29 +329,39 @@ namespace AuroraPlayer
         {
             try
             {
-                string tempDir = GetSafeAsciiTempPath();
-                foreach (string file in Directory.GetFiles(tempDir, "aurora_*"))
+                var dirs = new HashSet<string>(StringComparer.OrdinalIgnoreCase);
+                void AddDir(string? d)
                 {
+                    if (string.IsNullOrWhiteSpace(d)) return;
                     try
                     {
-                        // Пропускаем файлы моложе 60 секунд — они могут быть нашими текущими
-                        if ((DateTime.UtcNow - File.GetLastWriteTimeUtc(file)).TotalSeconds < 60) continue;
-                        File.Delete(file);
+                        string norm = IOPath.GetFullPath(d).TrimEnd('\\', '/');
+                        if (Directory.Exists(norm)) dirs.Add(norm);
                     }
                     catch { }
                 }
-                // C:\Temp тоже чистим если использовался как fallback
-                if (tempDir != @"C:\Temp" && Directory.Exists(@"C:\Temp"))
+
+                AddDir(GetSafeAsciiTempPath());
+                AddDir(IOPath.GetTempPath());
+                AddDir(@"C:\Temp");
+
+                DateTime now = DateTime.UtcNow;
+                foreach (string dir in dirs)
                 {
-                    foreach (string file in Directory.GetFiles(@"C:\Temp", "aurora_*"))
+                    try
                     {
-                        try
+                        foreach (string file in Directory.GetFiles(dir, "aurora_*"))
                         {
-                            if ((DateTime.UtcNow - File.GetLastWriteTimeUtc(file)).TotalSeconds < 60) continue;
-                            File.Delete(file);
+                            try
+                            {
+                                if ((now - File.GetLastWriteTimeUtc(file)).TotalSeconds < 60)
+                                    continue;
+                                File.Delete(file);
+                            }
+                            catch { }
                         }
-                        catch { }
                     }
+                    catch { }
                 }
             }
             catch { }
@@ -254,16 +370,18 @@ namespace AuroraPlayer
         public static List<(string Path, bool DeleteAfter)> BuildInputPathVariants(
             string originalPath, bool includeNormalizedApe = true)
         {
-            var  list = new List<(string, bool)>();
-            var  seen = new HashSet<string>(StringComparer.OrdinalIgnoreCase);
+            var list = new List<(string, bool)>();
+            if (string.IsNullOrWhiteSpace(originalPath))
+                return list;
+
+            var seen = new HashSet<string>(StringComparer.OrdinalIgnoreCase);
             void Add(string p, bool del) { if (File.Exists(p) && seen.Add(p)) list.Add((p, del)); }
 
             Add(originalPath, false);
             if (TryGetWindowsShortPath(originalPath) is string shortP) Add(shortP, false);
             if (includeNormalizedApe && TryCreateApeWithoutLeadingId3(originalPath, out string norm))
                 Add(norm, false);
-            // Копирование файла в temp удалено — FfmpegDecodeStream передаёт
-            // кириллические пути через именованный Windows pipe без копирования.
+
             return list;
         }
 
@@ -273,7 +391,7 @@ namespace AuroraPlayer
             Environment.GetFolderPath(Environment.SpecialFolder.ApplicationData),
             "AuroraPlayer", "decode.log");
 
-        /// <summary>Установить в true чтобы включить запись decode.log для отладки.</summary>
+        /// <summary>Установить в true, чтобы включить запись decode.log для отладки.</summary>
         public static bool LoggingEnabled = false;
 
         public static void AppendDecodeLog(string message)
@@ -281,13 +399,25 @@ namespace AuroraPlayer
             if (!LoggingEnabled) return;
             try
             {
-                string? dir = IOPath.GetDirectoryName(DecodeLogPath);
-                if (!string.IsNullOrEmpty(dir)) Directory.CreateDirectory(dir);
-                File.AppendAllText(DecodeLogPath,
-                    $"[{DateTime.Now:yyyy-MM-dd HH:mm:ss.fff}] {message}{Environment.NewLine}",
-                    Encoding.UTF8);
+                lock (_logSync)
+                {
+                    if (!_logDirEnsured)
+                    {
+                        string? dir = IOPath.GetDirectoryName(DecodeLogPath);
+                        if (!string.IsNullOrEmpty(dir))
+                            Directory.CreateDirectory(dir);
+                        _logDirEnsured = true;
+                    }
+
+                    File.AppendAllText(
+                        DecodeLogPath,
+                        $"[{DateTime.Now:yyyy-MM-dd HH:mm:ss.fff}] {message}{Environment.NewLine}",
+                        Encoding.UTF8);
+                }
             }
             catch { }
         }
     }
 }
+
+#nullable restore
