@@ -1,98 +1,84 @@
-<img width="775" height="611" alt="1Aurora Player box logo mockup" src="https://github.com/user-attachments/assets/06e8e064-b76e-495b-8d22-edc874efa0df" />
+<div align="center">
 
-## 🎵 Aurora Player
+<img width="420" alt="Aurora Player Logo" src="https://github.com/user-attachments/assets/06e8e064-b76e-495b-8d22-edc874efa0df" />
 
-Музыкальный плеер для Windows с поддержкой широкого спектра аудиоформатов, эквалайзером, микшером каналов и настраиваемой цветовой темой.
+# 🎵 Aurora Player
 
----
+**Современный аудиоплеер для Windows с поддержкой Lossless-форматов, многоканальным микшером, эквалайзером и визуализатором.**
 
-## 📋 Системные требования
+[![Release](https://img.shields.io/github/v/release/vitalikkontr/Aurora-Player?style=for-the-badge&color=8A2BE2&label=Версия)](https://github.com/vitalikkontr/Aurora-Player/releases/latest)
+[![Platform](https://img.shields.io/badge/Платформа-Windows%2010%20%2F%2011%20(x64)-0078D6?style=for-the-badge&logo=windows)](https://github.com/vitalikkontr/Aurora-Player)
+[![.NET](https://img.shields.io/badge/.NET-8.0-512BD4?style=for-the-badge&logo=dotnet)](https://dotnet.microsoft.com/download/dotnet/8)
+[![License](https://img.shields.io/github/license/vitalikkontr/Aurora-Player?style=for-the-badge&color=2ea44f&label=Лицензия)](LICENSE)
 
-- **ОС:** Windows 10 / Windows 11
-- **Архитектура:** x64
-- **DirectX:** поддержка DirectX 9 или выше (для WPF-интерфейса)
+[**⬇️ Скачать последнюю версию**](https://github.com/vitalikkontr/Aurora-Player/releases/latest) • [**📋 Список изменений**](https://github.com/vitalikkontr/Aurora-Player/releases) • [**🐞 Сообщить об ошибке**](https://github.com/vitalikkontr/Aurora-Player/issues)
 
----
-
-## ⚙️ Зависимости
-
-### .NET Runtime
-
-Для запуска плеера необходим **.NET 8 Desktop Runtime**:
-
-👉 [Скачать .NET 8 Desktop Runtime](https://dotnet.microsoft.com/download/dotnet/8)
-
-Выбери: **Run desktop apps** → **x64** → **Download**
+</div>
 
 ---
 
-### ffmpeg.exe
+## ✨ Возможности
 
-Aurora Player использует **ffmpeg** для воспроизведения форматов, не поддерживаемых нативно (FLAC, AAC, OPUS, MKV и др.).
-
-👉 **[Скачать ffmpeg для Windows](https://www.gyan.dev/ffmpeg/builds/ffmpeg-release-essentials.zip)**
-
-**Установка:**
-1. Скачай архив по ссылке выше
-2. Распакуй архив
-3. Найди файл `ffmpeg.exe` внутри папки `bin/`
-4. Скопируй `ffmpeg.exe` в папку рядом с `AuroraPlayer.exe`
-
----
-
-## 📥 Установка
-
-1. [Скачайте последнюю версию](https://github.com/vitalikkontr/Aurora-Player/releases/tag/v%2C1.4.5.0)
-2. Запустите установщик AuroraPlayerSetup.exe
-3. Следуйте инструкциям мастера установки
-
----
-
-## 📦 NuGet-пакеты (для разработчиков)
-
-Подтягиваются автоматически при сборке:
-
-| Пакет | Назначение |
-|---|---|
-| NAudio | Воспроизведение аудио (WASAPI, WinMM, ASIO) |
-| NAudio.Vorbis | Поддержка формата `.ogg` |
-| NVorbis | Декодер Vorbis |
-| TagLibSharp | Чтение тегов (исполнитель, обложка, название трека) |
-
----
-
-## 🔨 Сборка из исходников
-
-**Требования:**
-- [.NET 8 SDK](https://dotnet.microsoft.com/download/dotnet/8)
-- Visual Studio 2022 или VS Code с расширением C#
-
-**Команды:**
-```bash
-git clone https://github.com/vitalikkontr/Aurora-Player.git
-cd Aurora-Player
-dotnet restore
-dotnet build
-```
-
-> После сборки не забудь положить `ffmpeg.exe` рядом с собранным `AuroraPlayer.exe`
+* 🎧 **Широкая поддержка форматов:** нативное воспроизведение и декодирование через FFmpeg (`MP3`, `FLAC`, `OGG`, `AAC`, `WAV`, `OPUS`, `APE`, `WavPack`, `M4A`, `WMA`, `MKV` и др.).
+* 🔊 **Продвинутый аудио-движок:** вывод звука через **WASAPI**, **WinMM** и **ASIO**, поддержка многоканального звука **5.1 / 7.1** с низким потреблением CPU.
+* 🎛 **Эквалайзер и DSP:** плавная настройка частот без щелчков, компрессор и пространственный эффект Хааса.
+* 🎨 **Визуализатор и кастомизация:** плавные спектральные режимы (60+ FPS, 0 аллокаций в кадре), поддержка HiDPI и настраиваемые цветовые темы.
+* 📜 **Работа с метаданными:** полноценная поддержка CUE-листов (`Windows-1251`, `UTF-16 LE/BE`) и ID3/Vorbis/APE тегов с обложками.
 
 ---
 
 ## 🎯 Поддерживаемые форматы
 
-MP3, FLAC, OGG, AAC, WAV, OPUS, M4A, WMA и другие форматы через ffmpeg.
+| Категория | Форматы |
+| :--- | :--- |
+| **Lossless (без потерь)** | `FLAC`, `WAV`, `APE`, `WavPack (WV)`, `ALAC` |
+| **Lossy (сжатые)** | `MP3`, `AAC`, `OGG Vorbis`, `OPUS`, `M4A`, `WMA` |
+| **Плейлисты и контейнеры** | `CUE`, `M3U`, `M3U8`, аудиодорожки из `MKV` / `MP4` |
 
 ---
 
-## 📄 Лицензия
+## 📋 Системные требования
 
-MIT
+| Компонент | Минимальные требования |
+| :--- | :--- |
+| **Операционная система** | Windows 10 / Windows 11 (только **x64**) |
+| **Графика** | Видеокарта с поддержкой **DirectX 9** или выше (для аппаратного ускорения WPF) |
+| **Среда выполнения** | [.NET 8 Desktop Runtime (x64)](https://dotnet.microsoft.com/download/dotnet/8) |
 
 ---
 
-<div align="center">
+## 📥 Установка и настройка
 
-## *Aurora Player — сделано с ❤️ в Украине*
+### Шаг 1. Установка .NET 8 Runtime
+Для запуска приложения необходим **.NET 8 Desktop Runtime**:
+1. Перейдите на [страницу загрузки Microsoft .NET 8](https://dotnet.microsoft.com/download/dotnet/8).
+2. В блоке **Run desktop apps** выберите **Download x64** и установите пакет.
 
-</div>
+### Шаг 2. Установка Aurora Player
+1. Перейдите в раздел [**Releases**](https://github.com/vitalikkontr/Aurora-Player/releases/latest) (ссылка автоматически ведёт на самый свежий релиз).
+2. Скачайте **`AuroraPlayerSetup.exe`** и запустите мастер установки.
+
+### Шаг 3. Подключение `ffmpeg.exe` *(для FLAC, OPUS, AAC и др.)*
+> [!IMPORTANT]
+> Aurora Player использует **FFmpeg** для декодирования форматов, не поддерживаемых Windows из коробки. Без него часть треков не запустится.
+
+1. Скачайте сборку: [**ffmpeg-release-essentials.zip**](https://www.gyan.dev/ffmpeg/builds/ffmpeg-release-essentials.zip)
+2. Распакуйте архив и откройте папку `bin/`.
+3. Скопируйте файл **`ffmpeg.exe`** в папку с установленным плеером (рядом с `AuroraPlayer.exe`).
+
+---
+
+<details>
+<summary><b>🛠 Для разработчиков: Сборка из исходников и NuGet-зависимости</b></summary>
+<br>
+
+### Требования для сборки
+* [.NET 8 SDK](https://dotnet.microsoft.com/download/dotnet/8)
+* Visual Studio 2022 (с компонентом *Разработка классических приложений .NET*) или VS Code + C# Dev Kit
+
+### Клонирование и сборка
+```bash
+git clone [https://github.com/vitalikkontr/Aurora-Player.git](https://github.com/vitalikkontr/Aurora-Player.git)
+cd Aurora-Player
+dotnet restore
+dotnet build -c Release
