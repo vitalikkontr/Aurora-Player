@@ -6,11 +6,6 @@
 
 **Современный аудиоплеер для Windows с поддержкой Lossless-форматов, многоканальным микшером, эквалайзером и визуализатором.**
 
-[![Release](https://img.shields.io/github/v/release/vitalikkontr/Aurora-Player?style=for-the-badge&color=8A2BE2&label=Версия)](https://github.com/vitalikkontr/Aurora-Player/releases/latest)
-[![Platform](https://img.shields.io/badge/Платформа-Windows%2010%20%2F%2011%20(x64)-0078D6?style=for-the-badge&logo=windows)](https://github.com/vitalikkontr/Aurora-Player)
-[![.NET](https://img.shields.io/badge/.NET-8.0-512BD4?style=for-the-badge&logo=dotnet)](https://dotnet.microsoft.com/download/dotnet/8)
-[![License](https://img.shields.io/github/license/vitalikkontr/Aurora-Player?style=for-the-badge&color=2ea44f&label=Лицензия)](LICENSE)
-
 [**⬇️ Скачать последнюю версию**](https://github.com/vitalikkontr/Aurora-Player/releases/latest) • [**📋 Список изменений**](https://github.com/vitalikkontr/Aurora-Player/releases) • [**🐞 Сообщить об ошибке**](https://github.com/vitalikkontr/Aurora-Player/issues)
 
 </div>
